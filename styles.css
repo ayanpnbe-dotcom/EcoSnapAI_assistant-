@@ -734,3 +734,21 @@
 .account-panel>[hidden],.account-form[hidden]{display:none}
 @media(max-width:850px){.account-panel{grid-template-columns:1fr;gap:15px}.account-form{flex-wrap:wrap}.account-form label{min-width:180px}}
 @media(max-width:520px){.account-form{display:grid;grid-template-columns:1fr}.account-actions{flex-wrap:wrap}.account-actions .button{flex:1}}
+@media(max-width:680px){
+  .site-header{padding:0 4%}
+  .brand{gap:7px;font-size:18px;white-space:nowrap}
+  .brand-mark{width:30px;height:30px}
+  .header-actions{flex:0 0 auto}
+  .theme-toggle{flex:0 0 auto;padding:0 8px}
+  .header-cta{flex:0 0 auto;gap:7px;margin:0;min-height:38px;padding:0 10px;font-size:9px;white-space:nowrap}
+  .menu-toggle{flex:0 0 auto;padding:7px}
+}
+@media(max-width:360px){
+  .site-header{padding:0 3%}
+  .brand{gap:5px;font-size:16px}
+  .brand-mark{width:28px;height:28px}
+  .theme-toggle{padding:0 10px}
+  .theme-toggle #theme-name{display:none}
+  .header-cta{gap:5px;padding:0 8px;font-size:8px}
+  .menu-toggle{padding:6px}
+}
