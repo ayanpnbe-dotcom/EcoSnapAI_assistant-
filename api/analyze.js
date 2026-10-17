@@ -2,8 +2,17 @@ const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const IMAGE_LIMIT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_CATEGORIES = new Set(["plastic", "paper", "metal", "glass", "organic", "hazardous", "unknown"]);
-const COMPACT_PROMPT = `Review this waste-item photo for EcoSnapAI. Work in two steps: (1) note the visible evidence — object shape, labels or printed text, recycling symbols or codes, material cues, cleanliness, damage; (2) decide the classification from that evidence only. Return one JSON object only with exactly these fields: {"category":"plastic|paper|metal|glass|organic|hazardous|unknown","itemName":"short plain name","material":"visible material with uncertainty","confidence":0.0,"condition":"clean|soiled|damaged|unknown","needsReview":false,"hazardous":false,"action":"safe next step","preparation":"safe preparation","reuseOption":"safe reuse option or not suitable","explanation":"brief visible evidence"}.
-Treat appearance as uncertain evidence, not proof. Never assert resin, composition, recyclability, contamination, or a hazard unless visually evident. If a recycling code or label is legible, let it guide the material and say so in the explanation. Set confidence below 0.6 and needsReview true when the image is blurry, dark, obscured, shows multiple items, or the material is ambiguous. Use unknown when unclear or obscured. Do not infer local rules or recycling outcomes; say requirements vary. For batteries, chemicals, e-waste, medical waste, sharps, leaks, or possible hazards, prioritize caution; never advise opening, testing, or handling them. Keep fields concise.`;
+const COMPACT_PROMPT = `Carefully inspect this photo for EcoSnapAI and classify the main visible item. First identify whether there is one clear focal item; note only directly visible shape, parts, readable words/symbols, material cues, condition, and image limitations. Compare plausible material categories before deciding. Return one JSON object with exactly these fields: {"category":"plastic|paper|metal|glass|organic|hazardous|unknown","itemName":"short plain name","material":"visible material with uncertainty","confidence":0.0,"confidenceBasis":"explicit_label|distinctive_visual_cues|ambiguous_material|poor_image|insufficient_evidence","visualEvidence":["short directly visible fact"],"alternativeCategories":["category"],"confidenceReason":"brief reason for score","condition":"clean|soiled|damaged|unknown","needsReview":false,"hazardous":false,"action":"safe next step","preparation":"safe preparation","reuseOption":"safe reuse option or not suitable","explanation":"brief evidence-first explanation"}.
+Score the support from this image only, not your general certainty, and never inflate a score. A readable material label/recycling code or truly unmistakable visual construction may support 0.90-0.97; distinctive but not unique visual cues support at most 0.89; unresolved plausible alternatives or material inferred only from appearance support at most 0.59; blur, darkness, severe crop, occlusion, glare, tiny subject, or multiple overlapping items support at most 0.39. The server applies these ceilings. Use unknown when the material cannot be distinguished. State uncertainty and alternatives rather than guessing. visualEvidence must contain 1-4 short facts that can actually be seen; do not claim an absent/unreadable label is present. Do not claim resin, composition, recyclability, contamination, or hazard unless directly evidenced. Condition is visual only. Disposal/recycling rules vary by location and must not be inferred. For batteries, chemicals, e-waste, medical waste, sharps, leaks, or possible hazards, prioritize caution; never advise opening, testing, or handling them.`;
+
+const confidenceCaps = {
+  explicit_label: 0.97,
+  distinctive_visual_cues: 0.89,
+  ambiguous_material: 0.59,
+  poor_image: 0.39,
+  insufficient_evidence: 0.59,
+  conflicting_analyses: 0.59,
+};
 
 function sendJson(response, status, payload) {
   response.statusCode = status;
@@ -42,7 +51,7 @@ Core rules:
 - For local recycling instructions, require user location if it is not supplied. Only provide environmental calculations when weight and a valid calculation source are available; otherwise set calculation_status to requires_weight or requires_verified_source and leave calculations unavailable.
 - If an estimate is visually reasonable, provide a range, label it estimated with estimate_basis stating the visual basis. Never provide a false exact number.
 - item_summary.category MUST be exactly one of: plastic, paper, metal, glass, organic, hazardous, unknown.
-- Calibrate confidence honestly: 90 or above only when the material is unmistakable from the image; 60-89 when likely but not certain; below 60 means uncertain — set report_status to requires_user_input or manual_review_recommended and ask for what is missing instead of guessing.
+- Calibrate confidence honestly as visual evidence strength, not measured probability of correctness: 90 or above only when a readable label/symbol or unmistakable construction supports the material; 60-89 when likely but not certain; below 60 means uncertain — set report_status to requires_user_input or manual_review_recommended and ask for what is missing instead of guessing.
 - required_user_inputs entries MUST use field names exactly from: location, user_goal, weight, weight_unit, condition, contents_or_previous_use, additional_notes. Only include entries for information that is genuinely needed.
 - digital_twin_record.tracking_id MUST be "${trackingId}", current_status "scanned", and material_flow MUST start with {"stage":"scanned","timestamp":"${scannedAt}","details":"<short note>"}.
 USER_CONTEXT: ${JSON.stringify(userContext)}
@@ -82,20 +91,50 @@ function validateAnalysis(analysis) {
     throw Object.assign(new Error("The model did not return a recognized material category."), { status: 502 });
   }
   const confidence = Number(analysis.confidence);
-  const safeConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
+  let confidenceBasis = Object.hasOwn(confidenceCaps, analysis.confidenceBasis)
+    ? analysis.confidenceBasis
+    : "insufficient_evidence";
+  const modelConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
   const hazardous = analysis.category === "hazardous" || analysis.hazardous === true;
-  const needsReview = hazardous || analysis.category === "unknown" || safeConfidence < 0.6 || analysis.needsReview === true;
+  const alternatives = Array.isArray(analysis.alternativeCategories)
+    ? [...new Set(analysis.alternativeCategories.filter((category) =>
+      ALLOWED_CATEGORIES.has(category) && category !== analysis.category
+    ))].slice(0, 3)
+    : [];
+  const visualEvidence = Array.isArray(analysis.visualEvidence)
+    ? analysis.visualEvidence.filter((item) => typeof item === "string" && item.trim()).slice(0, 4)
+      .map((item) => cleanText(item, "", 160))
+    : [];
+  if (!visualEvidence.length) confidenceBasis = "insufficient_evidence";
+  else if (confidenceBasis === "explicit_label" &&
+      !visualEvidence.some((item) => /\b(label|symbol|code|printed|text|marking|marked|reads|says)\b/i.test(item))) {
+    confidenceBasis = "distinctive_visual_cues";
+  }
+  const evidenceCeiling = analysis.category === "unknown" ? 0.59 : confidenceCaps[confidenceBasis];
+  const safeConfidence = Math.min(modelConfidence, evidenceCeiling);
+  const finalCategory = safeConfidence < 0.6 && !hazardous ? "unknown" : analysis.category;
+  const needsReview = hazardous || finalCategory === "unknown" ||
+    analysis.needsReview === true || alternatives.length > 0 ||
+    confidenceBasis === "poor_image" || confidenceBasis === "insufficient_evidence";
   const safeAction = hazardous
     ? "Potential hazard: do not put this in household recycling or general waste. Avoid handling damaged or leaking items and consult an appropriate local authority or authorized collection point."
     : needsReview
-      ? "The image is not clear enough for a reliable identification. Check the item manually and consult your local waste service before disposal."
+      ? alternatives.length
+        ? `This is the leading visual estimate, but ${alternatives.map((category) =>
+          category === "unknown" ? "the material may remain unclear" : category
+        ).join(", ")} is also plausible. Verify the material before acting.`
+        : "This is an AI visual estimate that needs a manual check before you act."
       : cleanText(analysis.action, "Check local guidance before disposing of this item.");
 
   return {
-    category: needsReview && !hazardous ? "unknown" : analysis.category,
+    category: finalCategory,
     itemName: cleanText(analysis.itemName, "Unidentified item", 100),
     material: cleanText(analysis.material, "Material not confirmed", 120),
     confidence: safeConfidence,
+    confidenceBasis,
+    confidenceReason: cleanText(analysis.confidenceReason, "Confidence is limited to visible evidence.", 240),
+    visualEvidence,
+    alternativeCategories: alternatives,
     condition: ["clean", "soiled", "damaged", "unknown"].includes(analysis.condition) ? analysis.condition : "unknown",
     needsReview,
     hazardous,
@@ -200,13 +239,29 @@ function validateImage(input) {
   return { mimeType, base64: imageBytes.toString("base64") };
 }
 
-async function analyze(image, context) {
+async function analyze(image, context, options = {}) {
   const trackingId = `ECO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
   const scannedAt = new Date().toISOString();
   const imagePayload = { mimeType: image.mimeType, base64: image.base64 };
-  const compactPromise = callGemini(COMPACT_PROMPT, imagePayload, 600, 30000, 0.1);
+  const detailedPrompt = buildDetailedAnalysisPrompt(sanitizeUserContext(context), trackingId, scannedAt);
+  if (options.detailedOnly) {
+    const response = await callGemini(detailedPrompt, imagePayload, 4096, 30000);
+    return { detailed: validateDetailedAnalysis(response.result), detailedModel: response.model };
+  }
+
+  const compactPromise = callGemini(COMPACT_PROMPT, imagePayload, 900, 30000, 0.1);
+  if (options.compactOnly) {
+    const response = await compactPromise;
+    return {
+      analysis: validateAnalysis(response.result),
+      model: response.model,
+      detailed: null,
+      detailedModel: null,
+    };
+  }
+
   const detailedPromise = callGemini(
-    buildDetailedAnalysisPrompt(sanitizeUserContext(context), trackingId, scannedAt),
+    detailedPrompt,
     imagePayload,
     4096,
     30000,
@@ -250,7 +305,10 @@ module.exports = async function handler(request, response) {
     return;
   }
   try {
-    const result = await analyze(image, input.context);
+    const result = await analyze(image, input.context, {
+      compactOnly: input.compactOnly === true,
+      detailedOnly: input.detailedOnly === true,
+    });
     console.log("analysis completed");
     sendJson(response, 200, result);
   } catch (error) {

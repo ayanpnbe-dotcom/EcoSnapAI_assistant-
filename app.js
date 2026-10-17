@@ -119,6 +119,7 @@ let currentPhotoName = "";
 let currentPhotoFile = null;
 let currentSource = "sample";
 let currentAiAnalysis = null;
+let currentAnalysisId = "";
 let currentAnalysisModel = "";
 let currentAnalysisAt = "";
 let currentReportThumbnail = "";
@@ -581,6 +582,7 @@ function setSample(category) {
   currentIsSample = true;
   currentSource = "sample";
   currentAiAnalysis = null;
+  currentAnalysisId = "";
   currentAnalysisModel = "";
   currentAnalysisAt = "";
   currentReportThumbnail = "";
@@ -644,8 +646,21 @@ function renderResult() {
       ? "Local rules are not configured for this location. Use a local authority's guidance before disposing of this item."
       : item.advice;
   $("#confidence-badge").textContent = currentAiAnalysis
-    ? `${currentAiAnalysis.needsReview ? "Needs human review" : "AI estimate"} · ${Math.round(currentAiAnalysis.confidence * 100)}%`
+    ? `${currentAiAnalysis.needsReview ? "Human review needed" : "Visual confidence"} · ${Math.round(currentAiAnalysis.confidence * 100)}%`
     : currentIsSample ? "Demo fixture · not model output" : "Manual review · no confidence score";
+  if (currentAiAnalysis) {
+    const basisLabels = {
+      explicit_label: "Readable label or symbol",
+      distinctive_visual_cues: "Distinctive visual cues",
+      ambiguous_material: "Material is ambiguous",
+      poor_image: "Image quality limits confidence",
+      insufficient_evidence: "Insufficient visual evidence",
+      conflicting_analyses: "Gemini passes disagreed",
+    };
+    $("#confidence-badge").title = `${basisLabels[currentAiAnalysis.confidenceBasis] || "Visual evidence"}: ${currentAiAnalysis.confidenceReason || "AI-generated estimate, not validated accuracy."} This score is not a validated probability of correctness.`;
+  } else {
+    $("#confidence-badge").removeAttribute("title");
+  }
   $("#preview-caption").textContent = currentPhotoName
     ? `PHOTO PREVIEW · ${currentPhotoName}`.toUpperCase()
     : item.sampleCaption;
@@ -662,8 +677,12 @@ function renderResult() {
       ["Category", item.label],
       ["Visible material", currentAiAnalysis.material],
       ["Condition", currentAiAnalysis.condition],
-      ["Visual confidence", `${Math.round(currentAiAnalysis.confidence * 100)}%${currentAiAnalysis.needsReview ? " · human review recommended" : ""}`],
-      ["Visible evidence", currentAiAnalysis.explanation],
+      ["Visual evidence score", `${Math.round(currentAiAnalysis.confidence * 100)}% · ${currentAiAnalysis.confidenceReason}${currentAiAnalysis.needsReview ? " · human review recommended" : ""}`],
+      ["Visible cues", currentAiAnalysis.visualEvidence?.length ? currentAiAnalysis.visualEvidence.join("; ") : currentAiAnalysis.explanation],
+      ...(currentAiAnalysis.alternativeCategories?.length
+        ? [["Other plausible categories", currentAiAnalysis.alternativeCategories.map((category) => categories[category]?.label || category).join(", ")]]
+        : []),
+      ["Explanation", currentAiAnalysis.explanation],
       ["Suggested next step", currentAiAnalysis.action],
       ["Preparation", currentAiAnalysis.preparation],
       ["Reuse possibility", currentAiAnalysis.reuseOption],
@@ -901,6 +920,7 @@ function handlePhoto(file) {
   currentIsSample = false;
   currentSource = "manual-review";
   currentAiAnalysis = null;
+  currentAnalysisId = "";
   currentAnalysisModel = "";
   currentAnalysisAt = "";
   currentReportThumbnail = "";
@@ -963,12 +983,17 @@ function saveScan() {
     photoThumbnail: currentSource === "ai-model" ? currentReportThumbnail : "",
     assessment: assessCondition(currentCategory, currentAssessmentAnswers),
     detailedAnalysis: currentSource === "ai-model" ? currentDetailedAnalysis : null,
+    analysisId: currentSource === "ai-model" ? currentAnalysisId : "",
     userContext: currentSource === "ai-model" ? { ...currentUserContext } : {},
     aiSummary: currentAiAnalysis ? {
       itemName: currentAiAnalysis.itemName,
       material: currentAiAnalysis.material,
       condition: currentAiAnalysis.condition,
       confidence: currentAiAnalysis.confidence,
+      confidenceBasis: currentAiAnalysis.confidenceBasis,
+      confidenceReason: currentAiAnalysis.confidenceReason,
+      visualEvidence: currentAiAnalysis.visualEvidence,
+      alternativeCategories: currentAiAnalysis.alternativeCategories,
       needsReview: currentAiAnalysis.needsReview,
       hazardous: currentAiAnalysis.hazardous,
       action: currentAiAnalysis.action,
@@ -1752,6 +1777,8 @@ async function analyzePhoto() {
     announce("Add or take a photo before starting AI analysis.");
     return;
   }
+  const analysisId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  currentAnalysisId = analysisId;
   const button = $("#analyze-photo");
   button.disabled = true;
   button.classList.add("is-loading");
@@ -1770,12 +1797,26 @@ async function analyzePhoto() {
   let analyzeRequestFailed = false;
   try {
     const image = await readFileAsBase64(file);
+    const context = buildUserContext();
+    const requestBody = JSON.stringify({ ...image, context, compactOnly: true });
+    const detailedRequest = fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...image, context, detailedOnly: true }),
+    }).then(async (response) => {
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Detailed analysis could not be completed.");
+      if (!result.detailed || typeof result.detailed !== "object") {
+        throw new Error("Gemini returned no detailed analysis.");
+      }
+      return result;
+    }).catch((error) => ({ requestError: error }));
     let response;
     try {
       response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...image, context: buildUserContext() }),
+        body: requestBody,
       });
     } catch (error) {
       analyzeRequestFailed = true;
@@ -1786,8 +1827,10 @@ async function analyzePhoto() {
       analyzeRequestFailed = true;
       throw new Error(result.error || "The AI analysis could not be completed.");
     }
+    if (currentAnalysisId !== analysisId) return;
     currentAiAnalysis = result.analysis;
     currentDetailedAnalysis = result.detailed || null;
+    currentUserContext = context;
     currentCategory = result.analysis.category;
     currentSource = "ai-model";
     currentIsSample = false;
@@ -1804,8 +1847,53 @@ async function analyzePhoto() {
     renderResult();
     renderDetailedAnalysis();
     renderFollowupQuestions();
+    if (!currentDetailedAnalysis) {
+      const detailedPanel = $("#detailed-analysis");
+      const detailedContent = $("#detailed-analysis-content");
+      detailedPanel.hidden = false;
+      detailedContent.textContent = "Your visual estimate is ready. The detailed analysis is still running and will appear here automatically.";
+      void detailedRequest.then((detailedResult) => {
+        if (detailedResult.requestError) throw detailedResult.requestError;
+        const reconciledAnalysis = reconcileDetailedEstimate(result.analysis, detailedResult.detailed);
+        if (currentAnalysisId === analysisId) {
+          currentAiAnalysis = reconciledAnalysis;
+          currentCategory = reconciledAnalysis.category;
+          currentDetailedAnalysis = detailedResult.detailed;
+          renderResult();
+          renderDetailedAnalysis();
+          renderFollowupQuestions();
+        }
+        let updatedSavedRecord = false;
+        records.forEach((record) => {
+          if (record.analysisId !== analysisId) return;
+          record.detailedAnalysis = detailedResult.detailed;
+          record.category = reconciledAnalysis.category;
+          record.aiSummary = {
+            ...record.aiSummary,
+            confidence: reconciledAnalysis.confidence,
+            confidenceBasis: reconciledAnalysis.confidenceBasis,
+            confidenceReason: reconciledAnalysis.confidenceReason,
+            visualEvidence: reconciledAnalysis.visualEvidence,
+            alternativeCategories: reconciledAnalysis.alternativeCategories,
+            needsReview: reconciledAnalysis.needsReview,
+            action: reconciledAnalysis.action,
+            explanation: reconciledAnalysis.explanation,
+          };
+          updatedSavedRecord = true;
+        });
+        if (updatedSavedRecord) {
+          if (persistRecords()) renderDashboard();
+        }
+      }).catch((detailError) => {
+        console.warn("EcoSnapAI detailed analysis could not be completed.", detailError);
+        if (currentAnalysisId === analysisId) {
+          detailedContent.textContent = "Detailed analysis is unavailable. The compact visual estimate is ready to review.";
+        }
+      });
+    }
     announce(result.analysis.needsReview ? "AI review complete — please check this uncertain result." : "AI review complete. Check local disposal rules before acting.");
   } catch (error) {
+    if (currentAnalysisId !== analysisId) return;
     if (analyzeRequestFailed) {
       $("#model-status").querySelector("span").textContent = "AI server unavailable · local demo still works";
     }
@@ -1817,6 +1905,7 @@ async function analyzePhoto() {
     $("#result-disclaimer").textContent = "No model result was produced. You can retry the analysis or select a category for manual review.";
     currentAiAnalysis = null;
     currentDetailedAnalysis = null;
+    currentAnalysisId = "";
     $("#detailed-analysis").hidden = true;
     $("#followup-questions").hidden = true;
     currentAnalysisModel = "";
@@ -1829,6 +1918,30 @@ async function analyzePhoto() {
     button.disabled = !modelConfigured || !currentPhotoName;
     if (followupSubmit) followupSubmit.disabled = false;
   }
+}
+
+function reconcileDetailedEstimate(analysis, detailed) {
+  const detailedCategory = detailed?.item_summary?.category;
+  if (!analysis || !categories[detailedCategory] || detailedCategory === analysis.category) return analysis;
+
+  const compactLabel = categories[analysis.category]?.label || analysis.category;
+  const detailedLabel = categories[detailedCategory].label;
+  const confidenceReason = `Two Gemini passes disagreed: the quick estimate suggested ${compactLabel}, while the detailed pass suggested ${detailedLabel}.`;
+  const hazardous = analysis.hazardous || analysis.category === "hazardous" || detailedCategory === "hazardous";
+  return {
+    ...analysis,
+    category: "unknown",
+    confidence: Math.min(analysis.confidence, 0.59),
+    confidenceBasis: "conflicting_analyses",
+    confidenceReason,
+    alternativeCategories: [...new Set([...(analysis.alternativeCategories || []), detailedCategory])].slice(0, 3),
+    needsReview: true,
+    hazardous,
+    action: hazardous
+      ? "One visual pass flagged a possible hazardous item. Do not place it in household recycling; avoid handling it and check an appropriate local safety authority."
+      : "The two visual estimates disagree. Review the item's material manually before deciding what to do.",
+    explanation: `${analysis.explanation} A second Gemini pass suggested a different category, so the result needs human review.`,
+  };
 }
 
 function assessmentForRecord(record) {
@@ -2264,6 +2377,11 @@ async function generateProjectReport() {
     announce("Your report is ready using saved data; Gemini is not connected.");
     return;
   }
+  const offlineReport = buildOfflineProjectReport();
+  showGeneratedReport(
+    offlineReport,
+    `Quick local report · Gemini narrative is loading · based on ${records.length} saved ${records.length === 1 ? "record" : "records"}`,
+  );
   try {
     const response = await fetch("/api/report", {
       method: "POST",
@@ -2297,9 +2415,8 @@ async function generateProjectReport() {
     const reason = error instanceof TypeError && error.message === "Failed to fetch"
       ? "Could not connect to the local EcoSnapAI server. A local report was generated instead."
       : `The smart report could not be completed (${error.message || "unknown error"}). A local report was generated instead.`;
-    const fallbackReport = buildOfflineProjectReport();
     showGeneratedReport(
-      fallbackReport,
+      offlineReport,
       `Offline fallback · based on ${records.length} saved ${records.length === 1 ? "record" : "records"} · Gemini unavailable`,
     );
     $("#report-output").hidden = false;

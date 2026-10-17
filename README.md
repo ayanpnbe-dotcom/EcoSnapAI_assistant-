@@ -17,6 +17,8 @@ Hackathon prototype for the Smart Recycling Assistant track. The local app combi
 
 Gemini and demo features work without database credentials. Account syncing requires the Supabase and Postgres variables described below.
 
+Photo analysis now displays the compact visual estimate as soon as Gemini returns it; the detailed analysis continues in the background and appears when ready. Smart report generation immediately displays the complete local report while Gemini prepares the narrative. Visual confidence is limited by an evidence rubric, plausible alternatives, image quality, and disagreement between the compact and detailed Gemini passes. It is an AI estimate, not a validated probability or measured accuracy; no confidence level can make an unclear photo reliable.
+
 ## Add your Gemini API key
 
 1. Create a key in [Google AI Studio](https://aistudio.google.com/app/apikey). Check Google's current account, region, quota, and billing requirements.

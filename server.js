@@ -237,7 +237,7 @@ Return valid JSON only. Do not include Markdown, explanations outside JSON, gree
 Core rules:
 - Use only what is clearly visible in the image or supplied in USER_CONTEXT below. Never invent brand names, materials, weights, recycling rules, locations, environmental impact values, or hazardous properties.
 - Separate every finding into one of: "confirmed", "estimated", "user_provided", or "needs_user_input".
-- Include a confidence score from 0 to 100 for image-based findings.
+- Include a confidence score from 0 to 100 for image-based findings. This is a visual evidence score, not a measured probability of correctness. Do not exceed 90 unless a readable label/symbol or unmistakable construction directly supports the material. Ambiguous appearance alone is not proof. Note image limitations and plausible alternatives instead of guessing; list only cues actually visible in the photo.
 - If essential information is unavailable, add a clear, short question to required_user_inputs instead of guessing. Ask only questions relevant to the detected item. Keep recommendations practical and specific.
 - For local recycling instructions, require user location if it is not supplied. Only provide environmental calculations when weight and a valid calculation source are available; otherwise set calculation_status to requires_weight or requires_verified_source and leave calculations unavailable.
 - If an estimate is visually reasonable, provide a range, label it estimated with estimate_basis stating the visual basis. Never provide a false exact number.
@@ -255,20 +255,58 @@ function validateAnalysis(analysis) {
     throw Object.assign(new Error("The model did not return a recognized material category. Try another image or review it manually."), { status: 502 });
   }
   const confidence = Number(analysis.confidence);
-  const safeConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
+  const confidenceCaps = {
+    explicit_label: 0.97,
+    distinctive_visual_cues: 0.89,
+    ambiguous_material: 0.59,
+    poor_image: 0.39,
+    insufficient_evidence: 0.59,
+    conflicting_analyses: 0.59,
+  };
+  let confidenceBasis = Object.hasOwn(confidenceCaps, analysis.confidenceBasis)
+    ? analysis.confidenceBasis
+    : "insufficient_evidence";
+  const modelConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
   const hazardous = analysis.category === "hazardous" || analysis.hazardous === true;
-  const needsReview = hazardous || analysis.category === "unknown" || safeConfidence < 0.6 || analysis.needsReview === true;
+  const alternatives = Array.isArray(analysis.alternativeCategories)
+    ? [...new Set(analysis.alternativeCategories.filter((category) =>
+      allowedCategories.has(category) && category !== analysis.category
+    ))].slice(0, 3)
+    : [];
+  const visualEvidence = Array.isArray(analysis.visualEvidence)
+    ? analysis.visualEvidence.filter((item) => typeof item === "string" && item.trim()).slice(0, 4)
+      .map((item) => cleanText(item, "", 160))
+    : [];
+  if (!visualEvidence.length) confidenceBasis = "insufficient_evidence";
+  else if (confidenceBasis === "explicit_label" &&
+      !visualEvidence.some((item) => /\b(label|symbol|code|printed|text|marking|marked|reads|says)\b/i.test(item))) {
+    confidenceBasis = "distinctive_visual_cues";
+  }
+  const evidenceCeiling = analysis.category === "unknown" ? 0.59 : confidenceCaps[confidenceBasis];
+  const safeConfidence = Math.min(modelConfidence, evidenceCeiling);
+  const finalCategory = safeConfidence < 0.6 && !hazardous ? "unknown" : analysis.category;
+  const needsReview = hazardous || finalCategory === "unknown" ||
+    analysis.needsReview === true || alternatives.length > 0 ||
+    confidenceBasis === "poor_image" || confidenceBasis === "insufficient_evidence";
   const safeAction = hazardous
     ? "Potential hazard: do not put this in household recycling or general waste. Avoid handling damaged or leaking items and consult an appropriate local authority or authorized collection point."
     : needsReview
-      ? "The image is not clear enough for a reliable identification. Check the item manually and consult your local waste service before disposal."
+      ? alternatives.length
+        ? `This is the leading visual estimate, but ${alternatives.map((category) =>
+          category === "unknown" ? "the material may remain unclear" : category
+        ).join(", ")} is also plausible. Verify the material before acting.`
+        : "This is an AI visual estimate that needs a manual check before you act."
       : cleanText(analysis.action, "Check local guidance before disposing of this item.");
 
   return {
-    category: needsReview && !hazardous ? "unknown" : analysis.category,
+    category: finalCategory,
     itemName: cleanText(analysis.itemName, "Unidentified item", 100),
     material: cleanText(analysis.material, "Material not confirmed", 120),
     confidence: safeConfidence,
+    confidenceBasis,
+    confidenceReason: cleanText(analysis.confidenceReason, "Confidence is limited to visible evidence.", 240),
+    visualEvidence,
+    alternativeCategories: alternatives,
     condition: ["clean", "soiled", "damaged", "unknown"].includes(analysis.condition) ? analysis.condition : "unknown",
     needsReview,
     hazardous,
@@ -329,6 +367,14 @@ function validateReportInput(input) {
       const confidence = Number(record.aiSummary.confidence);
       safeRecord.aiEstimate = {
         confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : null,
+        confidenceBasis: cleanText(record.aiSummary.confidenceBasis, "not recorded", 40),
+        confidenceReason: cleanText(record.aiSummary.confidenceReason, "Not recorded", 240),
+        visualEvidence: Array.isArray(record.aiSummary.visualEvidence)
+          ? record.aiSummary.visualEvidence.filter((item) => typeof item === "string").slice(0, 4).map((item) => cleanText(item, "", 160))
+          : [],
+        alternativeCategories: Array.isArray(record.aiSummary.alternativeCategories)
+          ? record.aiSummary.alternativeCategories.filter((category) => allowedCategories.has(category)).slice(0, 3)
+          : [],
         needsReview: record.aiSummary.needsReview === true,
         hazardous: record.aiSummary.hazardous === true,
         itemName: cleanText(record.aiSummary.itemName, safeRecord.itemName, 100),
@@ -443,16 +489,37 @@ async function handleApi(request, response, pathname) {
       const imagePayload = { mimeType, base64: imageBytes.toString("base64") };
       const trackingId = `ECO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
       const scannedAt = new Date().toISOString();
+      const detailedPrompt = buildDetailedAnalysisPrompt(userContext, trackingId, scannedAt);
+      if (input.detailedOnly === true) {
+        const detailedResponse = await callGemini(detailedPrompt, imagePayload, 4096, 30000);
+        sendJson(response, 200, {
+          detailed: validateDetailedAnalysis(detailedResponse.result),
+          detailedModel: detailedResponse.model,
+        });
+        return;
+      }
+
       const compactPromise = callGemini(
-        `Review this waste-item photo for EcoSnapAI. Work in two steps: (1) note the visible evidence — object shape, labels or printed text, recycling symbols or codes, material cues, cleanliness, damage; (2) decide the classification from that evidence only. Return one JSON object only with exactly these fields: {"category":"plastic|paper|metal|glass|organic|hazardous|unknown","itemName":"short plain name","material":"visible material with uncertainty","confidence":0.0,"condition":"clean|soiled|damaged|unknown","needsReview":false,"hazardous":false,"action":"safe next step","preparation":"safe preparation","reuseOption":"safe reuse option or not suitable","explanation":"brief visible evidence"}.
-Treat appearance as uncertain evidence, not proof. Never assert resin, composition, recyclability, contamination, or a hazard unless visually evident. If a recycling code or label is legible, let it guide the material and say so in the explanation. Set confidence below 0.6 and needsReview true when the image is blurry, dark, obscured, shows multiple items, or the material is ambiguous. Use unknown when unclear or obscured. Do not infer local rules or recycling outcomes; say requirements vary. For batteries, chemicals, e-waste, medical waste, sharps, leaks, or possible hazards, prioritize caution; never advise opening, testing, or handling them. Keep fields concise.`,
+        `Carefully inspect this photo for EcoSnapAI and classify the main visible item. First identify whether there is one clear focal item; note only directly visible shape, parts, readable words/symbols, material cues, condition, and image limitations. Compare plausible material categories before deciding. Return one JSON object with exactly these fields: {"category":"plastic|paper|metal|glass|organic|hazardous|unknown","itemName":"short plain name","material":"visible material with uncertainty","confidence":0.0,"confidenceBasis":"explicit_label|distinctive_visual_cues|ambiguous_material|poor_image|insufficient_evidence","visualEvidence":["short directly visible fact"],"alternativeCategories":["category"],"confidenceReason":"brief reason for score","condition":"clean|soiled|damaged|unknown","needsReview":false,"hazardous":false,"action":"safe next step","preparation":"safe preparation","reuseOption":"safe reuse option or not suitable","explanation":"brief evidence-first explanation"}.
+Score the support from this image only, not your general certainty, and never inflate a score. A readable material label/recycling code or truly unmistakable visual construction may support 0.90-0.97; distinctive but not unique visual cues support at most 0.89; unresolved plausible alternatives or material inferred only from appearance support at most 0.59; blur, darkness, severe crop, occlusion, glare, tiny subject, or multiple overlapping items support at most 0.39. The server applies these ceilings. Use unknown when the material cannot be distinguished. State uncertainty and alternatives rather than guessing. visualEvidence must contain 1-4 short facts that can actually be seen; do not claim an absent/unreadable label is present. Do not claim resin, composition, recyclability, contamination, or hazard unless directly evidenced. Condition is visual only. Disposal/recycling rules vary by location and must not be inferred. For batteries, chemicals, e-waste, medical waste, sharps, leaks, or possible hazards, prioritize caution; never advise opening, testing, or handling them.`,
         imagePayload,
-        600,
+        900,
         30000,
         0.1,
       );
+      if (input.compactOnly === true) {
+        const modelResponse = await compactPromise;
+        sendJson(response, 200, {
+          analysis: validateAnalysis(modelResponse.result),
+          model: modelResponse.model,
+          detailed: null,
+          detailedModel: null,
+        });
+        return;
+      }
+
       const detailedPromise = callGemini(
-        buildDetailedAnalysisPrompt(userContext, trackingId, scannedAt),
+        detailedPrompt,
         imagePayload,
         4096,
         30000,
@@ -475,7 +542,7 @@ Treat appearance as uncertain evidence, not proof. Never assert resin, compositi
 The sanitized JSON below is the complete source of saved-record facts. The original image is not sent with this report request. Image thumbnails are kept in the browser; describe only the recorded model fields as visual estimates. The app stores records in browser localStorage and uses a vanilla JavaScript frontend, a Node.js server with built-in modules and Gemini API calls server-side.
 Condition answers are explicitly user-provided self-reports, not AI-observed facts. Use them as personalization context and label them as user-provided. Records may also carry a detailedSummary with structured visual-estimate data (report status, item, category, recommendation, open follow-up questions); treat those values as AI estimates and label them as such. Never contradict or weaken the deterministic safety guidance shown in the browser for batteries, chemical contents, sharp/broken items, pressurized containers, damage, leakage, swelling, heat, or unknown contents. Never recommend opening, testing, repairing, or repurposing hazardous items. When condition information is uncertain, state the uncertainty and recommend human/local-authority review.
 Structure the report with these sections in order: an executive summary using the exact saved-record and AI-estimate counts; a compact itemized table with one row per saved item (item, category, source, current journey stage, model confidence where available); one clearly labelled subsection for every saved item, with the actual category, item name, model confidence if available, visible material, condition, observed-evidence note, recorded preparation/reuse advice, detailed-summary recommendation and open follow-up questions where present, and recorded AI model/time if present; the actual event history and current journey stage for each record; practical next steps that do not pretend to know the user's local rules; safety and uncertainty warnings; environmental impact, weight and recovery values marked "Insufficient data to calculate" when missing; data provenance; limitations; and a final action checklist.
-If there is one item, prioritize its actual analysis details. If there are no records, state that plainly and do not invent an example. Use concise language and make the report useful to both ordinary users and hackathon judges.
+If there is one item, prioritize its actual analysis details. If there are no records, state that plainly and do not invent an example. Describe confidence as an unvalidated AI visual evidence score, never as a probability of correctness. Use concise language and make the report useful to both ordinary users and hackathon judges.
 Every stage is a software simulation, not physical tracking. Event entries are user-interface records, not sensor evidence. There are no connected collection services, facilities, verified destinations, object bounding boxes, secondary predictions, measured weights, environmental calculation factors, or local recycling-rule lookups. Never infer those facts. Do not claim that any item was actually recycled, collected, reused, composted, diverted, or processed. Do not invent confidence, predictions, hazard facts, environmental statistics, user research, accuracy, deployments, costs, partnerships, or system capabilities. Distinguish AI estimates, manual reviews, and sample fixtures. Treat potentially hazardous or uncertain items conservatively; never recommend opening, burning, dismantling, or handling a damaged item.
 Data to report (counts and sanitized record fields are authoritative):
 ${JSON.stringify(safeInput, null, 2)}
@@ -505,7 +572,7 @@ Return JSON only in this exact shape: {"reportMarkdown":"...the complete Markdow
           ? ` User-provided condition answers (not AI observations): ${JSON.stringify(record.userProvidedConditionAnswers)}.`
           : " No user-provided condition answers are recorded.";
         const aiDetails = record.aiEstimate
-          ? ` AI estimate: material ${record.aiEstimate.material}; condition ${record.aiEstimate.condition}; confidence ${record.aiEstimate.confidence === null ? "not recorded" : `${Math.round(record.aiEstimate.confidence * 100)}%`}; human review ${record.aiEstimate.needsReview ? "recommended" : "not flagged"}; safety flag ${record.aiEstimate.hazardous ? "present" : "not flagged"}; next step ${record.aiEstimate.action}; preparation ${record.aiEstimate.preparation}; reuse ${record.aiEstimate.reuseOption}; visual note ${record.aiEstimate.explanation}.`
+          ? ` AI estimate: material ${record.aiEstimate.material}; condition ${record.aiEstimate.condition}; visual evidence score ${record.aiEstimate.confidence === null ? "not recorded" : `${Math.round(record.aiEstimate.confidence * 100)}%`} (${record.aiEstimate.confidenceBasis}: ${record.aiEstimate.confidenceReason}); visible cues ${record.aiEstimate.visualEvidence.join("; ") || "not recorded"}; alternatives ${record.aiEstimate.alternativeCategories.join(", ") || "none reported"}; human review ${record.aiEstimate.needsReview ? "recommended" : "not flagged"}; safety flag ${record.aiEstimate.hazardous ? "present" : "not flagged"}; next step ${record.aiEstimate.action}; preparation ${record.aiEstimate.preparation}; reuse ${record.aiEstimate.reuseOption}; visual note ${record.aiEstimate.explanation}.`
           : "";
         const detailedDetails = record.detailedSummary
           ? ` Detailed analysis (AI estimate): status ${record.detailedSummary.reportStatus}; recommendation ${record.detailedSummary.recommendation || "not recorded"}${record.detailedSummary.openInputs.length ? `; open follow-up questions: ${record.detailedSummary.openInputs.join(" | ")}` : ""}.`
