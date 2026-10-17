@@ -149,6 +149,19 @@ function announce(message) {
   toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2600);
 }
 
+function normalizedConfidence(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  const normalized = numeric > 1 && numeric <= 100 ? numeric / 100 : numeric;
+  return Math.max(0, Math.min(1, normalized));
+}
+
+function confidenceDisplay(value) {
+  const normalized = normalizedConfidence(value);
+  if (normalized === null) return "Not available";
+  return normalized < 0.6 ? "Uncertain" : `${Math.round(normalized * 100)}%`;
+}
+
 function loadAuthSession() {
   try {
     const stored = localStorage.getItem("ecosnapai-auth-session-v1");
@@ -548,9 +561,10 @@ function loadRecordsFromStorage(key = storageKey) {
 function recordNeedsVisualReview(record) {
   const estimate = record?.aiSummary;
   if (!estimate) return false;
+  const confidence = normalizedConfidence(estimate.confidence);
   return Boolean(
     estimate.hazardous || record.category === "hazardous" || record.category === "unknown" ||
-    !Number.isFinite(estimate.confidence) || estimate.confidence < 0.6 ||
+    confidence === null || confidence < 0.6 ||
     (Array.isArray(estimate.alternativeCategories) && estimate.alternativeCategories.length > 0) ||
     ["ambiguous_material", "poor_image", "insufficient_evidence", "conflicting_analyses"].includes(estimate.confidenceBasis)
   );
@@ -663,7 +677,11 @@ function renderResult() {
     ? currentAiAnalysis.action
     : item.advice;
   $("#confidence-badge").textContent = currentAiAnalysis
-    ? `${currentAiAnalysis.hazardous ? "Safety check needed" : currentAiAnalysis.needsReview ? "Needs another look" : "Visual confidence"} · ${Math.round(currentAiAnalysis.confidence * 100)}%`
+    ? currentAiAnalysis.hazardous
+      ? "Safety check needed"
+      : recordNeedsVisualReview({ category: currentCategory, aiSummary: currentAiAnalysis })
+        ? "Uncertain · try a closer, well-lit photo"
+        : `Visual confidence · ${confidenceDisplay(currentAiAnalysis.confidence)}`
     : currentIsSample ? "Demo fixture · not model output" : "Manual review · no confidence score";
   if (currentAiAnalysis) {
     const basisLabels = {
@@ -692,7 +710,7 @@ function renderResult() {
       ["Category", item.label],
       ["Visible material", currentAiAnalysis.material],
       ["Condition", currentAiAnalysis.condition],
-      ["Visual evidence score", `${Math.round(currentAiAnalysis.confidence * 100)}% · ${currentAiAnalysis.confidenceReason}${currentAiAnalysis.needsReview ? " · another look recommended" : ""}`],
+      ["Visual evidence", `${confidenceDisplay(currentAiAnalysis.confidence)} · ${currentAiAnalysis.confidenceReason}${recordNeedsVisualReview({ category: currentCategory, aiSummary: currentAiAnalysis }) ? " · try a closer photo or include any material label" : ""}`],
       ["Visible cues", currentAiAnalysis.visualEvidence?.length ? currentAiAnalysis.visualEvidence.join("; ") : currentAiAnalysis.explanation],
       ...(currentAiAnalysis.alternativeCategories?.length
         ? [["Other plausible categories", currentAiAnalysis.alternativeCategories.map((category) => categories[category]?.label || category).join(", ")]]
@@ -1513,7 +1531,7 @@ function renderDashboard() {
     title.textContent = record.itemName;
     const subtitle = document.createElement("small");
     const sourceLabel = record.source === "ai-model"
-      ? `AI-assisted estimate${Number.isFinite(record.aiSummary?.confidence) ? ` · ${Math.round(record.aiSummary.confidence * 100)}%` : ""}`
+      ? `AI-assisted estimate${Number.isFinite(record.aiSummary?.confidence) ? ` · ${confidenceDisplay(record.aiSummary.confidence)}` : ""}`
       : record.source === "manual-review" ? "manual review" : "sample data";
     subtitle.textContent = `${item.label} · ${sourceLabel}`;
     nameText.append(title, subtitle);
@@ -2085,7 +2103,7 @@ function itemReportMarkdown(record, generatedAt = new Date().toISOString()) {
     `- Item image: ${image}`,
     `- Recognized item name / category: ${reportSafeLine(record.itemName)} / ${category.label}`,
     `- Predicted material(s): ${estimate?.material ? reportSafeLine(estimate.material) : "Unknown / not confirmed"}`,
-    `- Recognition confidence: ${Number.isFinite(estimate?.confidence) ? `${Math.round(estimate.confidence * 100)}% (AI estimate; not measured accuracy)` : "Unknown / no model score recorded"}`,
+    `- Visual evidence: ${Number.isFinite(estimate?.confidence) ? `${confidenceDisplay(estimate.confidence)} (AI estimate; not measured accuracy)` : "Unknown / no model score recorded"}`,
     `- Classification summary: ${classification}`,
     `- Recyclable: ${assessment.classification.some((entry) => entry.startsWith("Recyclable")) ? "Candidate only; local acceptance unverified" : "Unknown / not confirmed"}`,
     `- Reusable: ${assessment.classification.some((entry) => entry.startsWith("Reuse")) ? "Possible; suitability not certified" : "Not confirmed"}`,
@@ -2130,7 +2148,7 @@ function itemReportMarkdown(record, generatedAt = new Date().toISOString()) {
     `- Personalized rule-based recommendation: ${reportSafeLine(assessment.action)}`,
     `- Explanation: ${reportSafeLine(assessment.explanation)}`,
     `- Alternative: ${reportSafeLine(assessment.alternative)}`,
-    `- Confidence / limitations: ${Number.isFinite(estimate?.confidence) ? `${Math.round(estimate.confidence * 100)}% model confidence estimate; not validated accuracy. ` : "No confidence score. "}${reportSafeLine(estimate?.caveat || "Visual inspection cannot confirm chemical composition, local acceptance, or actual recycling outcomes.")}`,
+    `- Confidence / limitations: ${Number.isFinite(estimate?.confidence) ? `${confidenceDisplay(estimate.confidence)} visual evidence; not validated accuracy. ` : "No confidence score. "}${reportSafeLine(estimate?.caveat || "Visual inspection cannot confirm chemical composition, local acceptance, or actual recycling outcomes.")}`,
     "- Follow-up: Confirm uncertain condition details and consult the local waste authority.",
     "",
     "## Audit and quality",
@@ -2191,7 +2209,7 @@ function renderReportDashboard() {
       const estimate = record.aiSummary;
       const conditionAssessment = assessmentForRecord(record);
       const confidence = record.source === "ai-model" && Number.isFinite(estimate?.confidence)
-        ? `${Math.round(estimate.confidence * 100)}%`
+        ? confidenceDisplay(estimate.confidence)
         : "Not available";
       const source = record.source === "ai-model"
         ? `AI visual estimate${record.analysisModel ? ` · ${escapeHtml(record.analysisModel)}` : ""}`
@@ -2215,7 +2233,7 @@ function renderReportDashboard() {
       const warning = record.category === "hazardous" || estimate?.hazardous
         ? `<p class="report-warning" role="note"><strong>Potential hazard:</strong> ${escapeHtml(estimate?.reviewReason || estimate?.action || "Keep separate from ordinary waste. Do not open, test, burn, or handle damaged items; check with an authorized local service.")}</p>`
         : recordNeedsVisualReview(record)
-          ? `<p class="report-warning report-warning-review" role="note"><strong>Uncertain visual estimate:</strong> ${escapeHtml(estimate?.reviewReason || "A closer, well-lit photo or a visible material label may help clarify this item.")}</p>`
+          ? `<p class="report-warning report-warning-review" role="note"><strong>Uncertain visual estimate:</strong> ${escapeHtml(estimate?.reviewReason || "Photograph one item at a time in good light and include a close-up of any material label.")}</p>`
           : "";
       const action = estimate?.action || category.advice;
       const events = [...record.events].sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
@@ -2238,7 +2256,7 @@ function renderReportDashboard() {
       return `<article class="report-item-card">
         <div class="report-item-heading">${thumbnail}<div class="report-item-title"><span class="report-category-badge category-${record.category}">${escapeHtml(category.label)}</span><h4>${escapeHtml(record.itemName)}</h4><p>${source}</p><code>${escapeHtml(record.id)}</code></div></div>
         ${warning}
-        <div class="report-item-stats"><div><span>AI confidence</span><strong>${confidence}</strong></div><div><span>Current twin stage</span><strong>${escapeHtml(stageLabels[record.status])} <small>· simulated</small></strong></div><div><span>Quantity</span><strong>Not measured <small>· 1 saved record</small></strong></div></div>
+        <div class="report-item-stats"><div title="${escapeHtml(estimate?.confidenceReason || "AI-generated visual evidence estimate; not validated accuracy.")}"><span>Visual estimate</span><strong>${escapeHtml(confidence)}</strong></div><div><span>Current twin stage</span><strong>${escapeHtml(stageLabels[record.status])} <small>· simulated</small></strong></div><div><span>Quantity</span><strong>Not measured <small>· 1 saved record</small></strong></div></div>
         <section class="report-subsection"><h5>Computer vision record</h5>${details}<p class="report-caption">A saved AI result is a visual estimate, not proof of material composition or recycling acceptance. ${record.analysisModel ? `Model: ${escapeHtml(record.analysisModel)}.` : "Model version was not recorded."}</p></section>
         <section class="report-subsection"><h5>Recommended next steps</h5><div class="report-recommendations"><div><span>01 · ACTION</span><p>${escapeHtml(action)}</p></div><div><span>02 · SAFE PREPARATION</span><p>${escapeHtml(estimate?.preparation || "Follow applicable local guidance; this prototype does not verify local rules.")}</p></div><div><span>03 · REUSE POSSIBILITY</span><p>${escapeHtml(estimate?.reuseOption || "Not assessed for this record.")}</p></div></div><p class="report-caption">No verified local drop-off locations are connected. Check your local authority before disposal.</p></section>
         <section class="report-subsection"><h5>Digital Twin trace <small>software simulation · not physical tracking</small></h5><ol class="report-event-list">${eventMarkup}</ol><p class="report-caption">Collection, processing facility, destination and final recovery are not connected or evidenced.</p></section>
@@ -2293,7 +2311,7 @@ function buildOfflineProjectReport() {
     ? records.map((record) => {
       const estimate = record.aiSummary;
       const detail = estimate
-        ? `; AI visual estimate ${Number.isFinite(estimate.confidence) ? `${Math.round(estimate.confidence * 100)}% confidence` : "without a confidence score"}${recordNeedsVisualReview(record) ? ", another look recommended" : ""}`
+        ? `; AI visual estimate ${Number.isFinite(estimate.confidence) ? confidenceDisplay(estimate.confidence) : "without a confidence score"}${recordNeedsVisualReview(record) ? ", another look recommended" : ""}`
         : "";
       return `- ${reportSafeLine(record.itemName) || "Unidentified item"} (ID ${reportSafeLine(record.id)}) — ${categories[record.category].label}; ${stageLabels[record.status]} (simulated); ${record.source === "ai-model" ? "AI-assisted estimate" : record.source === "manual-review" ? "manual review" : "sample data"}${detail}.`;
     }).join("\n")
@@ -2306,7 +2324,7 @@ function buildOfflineProjectReport() {
         `### ${reportSafeLine(record.itemName) || "Unidentified item"}`,
         `- Visible material: ${reportSafeLine(summary.material) || "Not recorded"}`,
         `- Condition: ${reportSafeLine(summary.condition) || "Unknown"}`,
-        `- Confidence: ${Number.isFinite(summary.confidence) ? `${Math.round(summary.confidence * 100)}% model estimate` : "Not recorded"}`,
+        `- Visual evidence: ${Number.isFinite(summary.confidence) ? `${confidenceDisplay(summary.confidence)} model estimate` : "Not recorded"}`,
         `- Model and timestamp: ${reportSafeLine(record.analysisModel) || "Not recorded"} · ${record.analysisAt ? reportSafeLine(new Date(record.analysisAt).toLocaleString()) : "timestamp not recorded"}`,
         `- Suggested next step: ${reportSafeLine(summary.action) || "Not recorded"}`,
         `- Preparation: ${reportSafeLine(summary.preparation) || "Not recorded"}`,
@@ -2408,22 +2426,26 @@ async function generateProjectReport() {
   button.disabled = true;
   button.classList.add("is-loading");
   button.textContent = "Building your report…";
+  const offlineReport = buildOfflineProjectReport();
+  showGeneratedReport(
+    offlineReport,
+    `Quick local report · based on ${records.length} saved ${records.length === 1 ? "record" : "records"}`,
+  );
+  let readinessMessage = modelConfigured
+    ? "Your quick report is ready; Gemini is adding the optional narrative."
+    : "Your report is ready offline; Gemini is not connected.";
+  window.setTimeout(() => announce(readinessMessage), 1000);
+
   if (!modelConfigured) {
-    const offlineReport = buildOfflineProjectReport();
     showGeneratedReport(offlineReport, `Generated locally · based on ${records.length} saved ${records.length === 1 ? "record" : "records"} · Gemini not connected`);
     $("#report-error").textContent = "Gemini is unavailable. The visual report is still built from your saved records; its narrative uses the verified offline version.";
     $("#report-error").hidden = false;
     button.classList.remove("is-loading");
     button.innerHTML = "<span>✳</span> Generate smart report";
     button.disabled = false;
-    announce("Your report is ready using saved data; Gemini is not connected.");
     return;
   }
-  const offlineReport = buildOfflineProjectReport();
-  showGeneratedReport(
-    offlineReport,
-    `Quick local report · Gemini narrative is loading · based on ${records.length} saved ${records.length === 1 ? "record" : "records"}`,
-  );
+
   try {
     const response = await fetch("/api/report", {
       method: "POST",
@@ -2454,7 +2476,7 @@ async function generateProjectReport() {
       throw new Error("The report response was incomplete. Please retry.");
     }
     showGeneratedReport(result.report, `Generated with ${result.model} · based on ${result.basedOn.recordCount} saved ${result.basedOn.recordCount === 1 ? "record" : "records"}`);
-    announce("EcoSnapAI project report generated.");
+    readinessMessage = "Smart report generated.";
   } catch (error) {
     console.error("EcoSnapAI could not generate the project report.", error);
     const reason = error instanceof TypeError && error.message === "Failed to fetch"
@@ -2467,7 +2489,7 @@ async function generateProjectReport() {
     $("#report-output").hidden = false;
     $("#report-error").textContent = reason;
     $("#report-error").hidden = false;
-    announce("Gemini was unavailable, so a complete offline report was generated from your saved records.");
+    readinessMessage = "Offline report ready. See the notice above for Gemini status.";
   } finally {
     button.classList.remove("is-loading");
     button.innerHTML = "<span>✳</span> Generate smart report";
