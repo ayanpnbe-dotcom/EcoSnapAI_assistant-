@@ -131,7 +131,7 @@ let currentDetailedAnalysis = null;
 let currentUserContext = {};
 let modelConfigured = false;
 let databaseConfigured = false;
-let authSession = loadAuthSession();
+let authSession = null;
 let pendingLocalRecords = [];
 let cloudWriteQueue = Promise.resolve();
 let records = [];
@@ -2135,8 +2135,8 @@ function refreshGeneratedReport() {
 }
 
 function renderReportDashboard() {
-  const recordScope = authSession ? "your signed-in account" : "this browser";
-  const recordStorage = authSession ? "the account database" : "this browser's local storage";
+  const recordScope = "this browser";
+  const recordStorage = "this browser's local storage";
   const aiCount = records.filter((record) => record.source === "ai-model" && record.aiSummary).length;
   const reviewCount = records.filter((record) =>
     record.category === "unknown" || record.source === "manual-review" || record.aiSummary?.needsReview
@@ -2221,7 +2221,7 @@ function renderReportDashboard() {
   <section class="report-section"><div class="report-section-heading"><div><span class="overline">01 · MATERIAL SNAPSHOT</span><h3>What was recorded</h3></div><div class="report-category-list">${categoriesMarkup}</div></div><div class="report-item-list">${itemCards}</div></section>
   <section class="report-section"><div class="report-section-heading"><div><span class="overline">02 · CIRCULARITY</span><h3>Impact, without guesswork</h3></div></div><div class="report-impact-grid"><article><span>Saved item records</span><strong>${records.length} items</strong><small>Count from ${recordScope}'s saved records.</small></article><article><span>Measured material weight</span><strong>Insufficient data</strong><small>No item weights were measured or supplied.</small></article><article><span>Diverted / recovered mass</span><strong>Insufficient data</strong><small>No collection or processing evidence is connected.</small></article><article><span>Energy / emissions benefit</span><strong>Not calculated</strong><small>No documented factor or verified outcome is available.</small></article></div><p class="report-caption">Reuse, recycling and composting can support a circular economy when the item and local pathway are verified. This prototype does not claim that a saved scan caused any environmental outcome.</p></section>
   <section class="report-section report-checklist"><div class="report-section-heading"><div><span class="overline">03 · BEFORE YOU ACT</span><h3>Action checklist</h3></div></div><ul><li>Review low-confidence, unknown and potentially hazardous classifications with a person.</li><li>Check your local waste authority for accepted materials and current drop-off options.</li><li>Do not place batteries, chemicals, medical items or other suspected hazards in ordinary recycling.</li><li>Treat all journey stages as simulated unless a real collection or processing event is independently verified.</li></ul></section>
-  <details class="report-technical"><summary>Data provenance, assumptions and limitations</summary><ul><li>Saved records and event timestamps come from ${recordStorage}; signed-in account records can be accessed across devices.</li><li>Only actual saved AI response fields are presented as computer-vision estimates. Small thumbnails for up to four recent photo records are saved with the records; full-size photos are not stored in the database or sent with the report request.</li><li>No object bounding boxes, secondary predictions, measured weights, facility destinations or environmental calculations are implemented.</li><li>Lifecycle stages are software-simulated, not sensor-verified physical movements. Local disposal rules are not integrated.</li></ul></details>`;
+  <details class="report-technical"><summary>Data provenance, assumptions and limitations</summary><ul><li>Saved records and event timestamps come from ${recordStorage}; they are stored only in this browser and are not synced across devices.</li><li>Only actual saved AI response fields are presented as computer-vision estimates. Small thumbnails for up to four recent photo records are saved in browser storage; full-size photos are not retained or sent with the report request.</li><li>No object bounding boxes, secondary predictions, measured weights, facility destinations or environmental calculations are implemented.</li><li>Lifecycle stages are software-simulated, not sensor-verified physical movements. Local disposal rules are not integrated.</li></ul></details>`;
 }
 
 function reportSafeLine(value) {
@@ -2229,8 +2229,8 @@ function reportSafeLine(value) {
 }
 
 function buildOfflineProjectReport() {
-  const recordScope = authSession ? "your signed-in account" : "this browser";
-  const recordStorage = authSession ? "your account database" : "browser-local history";
+  const recordScope = "this browser";
+  const recordStorage = "browser-local history";
   const categoryCounts = Object.keys(categories)
     .map((category) => `- ${categories[category].label}: ${records.filter((record) => record.category === category).length}`)
     .join("\n");
@@ -2326,7 +2326,7 @@ function buildOfflineProjectReport() {
     "- No verified collection, processing, destination or environmental calculation factor is connected.",
     "",
     "## Architecture, privacy and safety",
-    `Guest records stay in browser localStorage; signed-in records sync to the Postgres database through server endpoints after Supabase Auth verifies the user's session. The Node.js server keeps database credentials and the Gemini API key server-side. Photo data is sent to Google only after the user selects AI analysis; smart report generation sends sanitized record metadata and validated user-provided condition answers, not photos. The prototype does not connect to local recycling rules. Potentially hazardous items need cautious human review and should not be opened, tested, or handled based on an AI suggestion.`,
+    `Saved records stay in this browser's localStorage; no user account or database is required. The Gemini API key stays server-side. Photo data is sent to Google only after the user selects AI analysis; smart report generation sends sanitized record metadata and validated user-provided condition answers, not photos. The prototype does not connect to local recycling rules. Potentially hazardous items need cautious human review and should not be opened, tested, or handled based on an AI suggestion.`,
     "",
     "## Limitations and assumptions",
     "Classification and confidence have not been validated for accuracy. Local rules, collection services, and actual material destinations are not integrated. Guest history is device/browser-specific, lifecycle changes are simulated, and no collection, recycling, reuse, diversion, or carbon-saving outcome is measured.",
@@ -2355,9 +2355,7 @@ function buildOfflineProjectReport() {
 function generateOfflineReport() {
   const report = buildOfflineProjectReport();
   showGeneratedReport(report, `Generated locally · based on ${records.length} saved ${records.length === 1 ? "record" : "records"} · no Gemini request`);
-  announce(authSession
-    ? "Offline project report generated from your account's saved records."
-    : "Offline project report generated from this browser's saved records.");
+  announce("Offline project report generated from this browser's saved records.");
 }
 
 async function generateProjectReport() {
@@ -2403,7 +2401,10 @@ async function generateProjectReport() {
         })),
       }),
     });
-    const result = await response.json();
+    const result = await response.json().catch(() => null);
+    if (!result || typeof result !== "object") {
+      throw new Error(`The report endpoint returned a non-JSON response (${response.status}).`);
+    }
     if (!response.ok) throw new Error(result.error || "The report could not be generated.");
     if (typeof result.report !== "string" || result.report.trim().length < 100) {
       throw new Error("The report response was incomplete. Please retry.");
@@ -2466,7 +2467,7 @@ function downloadReportData() {
     application: "EcoSnapAI Smart Recycling Assistant",
     reportId: $("#report-id").textContent || null,
     exportedAt: new Date().toISOString(),
-    scope: authSession ? "Records saved in the signed-in account. Image thumbnails are excluded from this data export." : "Records saved in this browser only. Image thumbnails are excluded from this data export.",
+    scope: "Records saved in this browser only. Image thumbnails are excluded from this data export.",
     records: records.map(({ photoThumbnail, ...record }) => record),
   };
   const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: "application/json;charset=utf-8" });
@@ -2629,7 +2630,7 @@ function clearHistory() {
     announce("There are no saved records to clear.");
     return;
   }
-  const owner = authSession ? "your account" : "this browser";
+  const owner = "this browser";
   if (!window.confirm(`Clear all ${records.length} saved material records from ${owner}? This cannot be undone.`)) return;
   const previousRecords = records;
   records = [];
@@ -2642,7 +2643,7 @@ function clearHistory() {
   $("#date-filter").value = "";
   renderDashboard();
   updateTwinJourney();
-  announce(authSession ? "Your account material history was cleared." : "Material history cleared from this browser.");
+  announce("Material history cleared from this browser.");
 }
 
 $("#theme-toggle").addEventListener("click", cycleTheme);
@@ -2845,9 +2846,7 @@ $("#primary-nav").addEventListener("click", (event) => {
 });
 
 records = loadRecordsFromStorage(storageKey);
-pendingLocalRecords = loadRecordsFromStorage(pendingStorageKey);
 setSample(currentCategory);
 renderDashboard();
 updateTwinJourney();
-initializeAccount();
 checkModelStatus();

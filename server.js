@@ -426,6 +426,11 @@ function validateReportInput(input) {
 }
 
 async function handleApi(request, response, pathname) {
+  if (pathname === "/api/report") {
+    const handler = require(path.join(root, "api/report.js"));
+    await handler(request, response);
+    return;
+  }
   if (pathname === "/api/auth" || pathname === "/api/records") {
     const handler = require(path.join(root, pathname === "/api/auth" ? "api/auth.js" : "api/records.js"));
     await handler(request, response);
@@ -445,7 +450,7 @@ async function handleApi(request, response, pathname) {
     return;
   }
 
-  if (request.method !== "POST" || !["/api/analyze", "/api/report"].includes(pathname)) {
+  if (request.method !== "POST" || pathname !== "/api/analyze") {
     sendJson(response, 404, { error: "API route not found." });
     return;
   }

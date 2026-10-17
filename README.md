@@ -1,6 +1,6 @@
 # EcoSnapAI
 
-Hackathon prototype for the Smart Recycling Assistant track. The local app combines sample/manual material review, optional Gemini image analysis, a simulated Digital Twin, browser-local or account-backed history, and an evidence-grounded recycling report with an optional Gemini narrative.
+Hackathon prototype for the Smart Recycling Assistant track. The local app combines sample/manual material review, optional Gemini image analysis, a simulated Digital Twin, browser-local history, and an evidence-grounded recycling report with an optional Gemini narrative. No sign-in or user account is required.
 
 ## Run locally
 
@@ -15,7 +15,7 @@ Hackathon prototype for the Smart Recycling Assistant track. The local app combi
 
 4. Open <http://127.0.0.1:4173>.
 
-Gemini and demo features work without database credentials. Account syncing requires the Supabase and Postgres variables described below.
+Demo features and browser-local history work without database credentials. Gemini features require a server-side `GEMINI_API_KEY`.
 
 Photo analysis now displays the compact visual estimate as soon as Gemini returns it; the detailed analysis continues in the background and appears when ready. Smart report generation immediately displays the complete local report while Gemini prepares the narrative. Visual confidence is limited by an evidence rubric, plausible alternatives, image quality, and disagreement between the compact and detailed Gemini passes. It is an AI estimate, not a validated probability or measured accuracy; no confidence level can make an unclear photo reliable.
 
@@ -47,7 +47,7 @@ Use the header theme button to cycle **Light**, **Dark**, and **3D** themes. The
 - **AI report narrative:** material category, item label, sample/manual/AI origin, simulated lifecycle stage, analysis timestamp/model, recorded event history, sanitized AI estimate details, detailed-analysis summaries, and validated user-provided condition answers for personalized context. Answers are labeled as self-reported, not AI-observed; original photos and report thumbnails are not sent.
 - **Offline project report:** generated entirely in the browser from saved records; nothing is sent to Gemini.
 
-Signed-in users can store their saved material history in the connected Postgres database; guest history stays in this browser's `localStorage`. Account sessions are provided by Supabase Auth, and server endpoints verify each session and scope database access to that user's account. Small optional thumbnails for up to four recent analyzed photos are included in saved records. Full-size photos remain only in the current browser session and are not included in report requests. Use demo/sample records for a public hackathon demonstration and get consent before sending identifiable or sensitive images to an external AI provider.
+Saved material records stay in this browser's `localStorage`; no account or database is needed. Records do not sync between browsers or devices. Small optional thumbnails for up to four recent analyzed photos are included in browser storage. Full-size photos remain only in the current browser session and are not included in report requests. Use demo/sample records for a public hackathon demonstration and get consent before sending identifiable or sensitive images to an external AI provider.
 
 ## Prototype limitations
 
@@ -64,7 +64,7 @@ Signed-in users can store their saved material history in the connected Postgres
 
 - `GET /api/status` — provider/model readiness without revealing the key.
 - `POST /api/analyze` — analyze a supported image through Gemini.
-- `POST /api/report` — generate the Gemini project report from validated, sanitized material records.
+- `POST /api/report` — generate a Gemini narrative from validated, sanitized browser-local material records. This route is deployed as a Vercel function.
 
 For an API key setup check, add the key and restart first; the browser UI and endpoint status will confirm whether the server has loaded it.
 
@@ -72,12 +72,6 @@ For an API key setup check, add the key and restart first; the browser UI and en
 
 This project uses a vanilla JavaScript frontend and Vercel serverless functions in `api/`. Set `GEMINI_API_KEY` in the Vercel project's Environment Variables for the environments you deploy, then redeploy. `GEMINI_MODEL` is optional. After deployment, confirm `GET /api/status` reports `configured: true`, then select a photo and choose **Analyze photo with Gemini**; the browser should send a `POST /api/analyze` request. The key is read only by the server function and is never sent to the browser.
 
-### Configure Supabase Auth and Postgres
+### Browser-local material history
 
-1. In the Vercel project, connect the Supabase integration and the Postgres database. The server accepts the integration's `POSTGRES_URL` (preferred for serverless pooling), `POSTGRES_PRISMA_URL`, or `POSTGRES_URL_NON_POOLING`, along with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (or `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). Keep database URLs and passwords server-side; never add them to frontend code or commit them.
-2. In the Supabase project's **SQL Editor**, run [`database/schema.sql`](./database/schema.sql) once to create the per-user saved-records table. The API uses the server-side Postgres URL and scopes every operation to the Supabase-authenticated user.
-3. In Supabase **Authentication → Providers**, enable Email. Configure email confirmation and allowed redirect URLs for your deployed domain as appropriate.
-4. In Vercel, confirm those integration variables are available in the deployment environment and redeploy. `GET /api/status` reports `databaseConfigured: true` when the required variable names are present (it does not test connectivity or expose credentials).
-5. Use the **Your account** panel to create an account or sign in. Existing browser-local records are offered for explicit import after sign-in; new and changed records sync to that account. Guests continue to use browser-local history. Each account's saved dataset is limited to 3 MB.
-
-For local account/database testing, add the same variable names to `.env` using your own Supabase project's credentials, then run `npm install` before starting `node .\server.js`. Do not share `.env` values. Passwords and auth tokens are not stored in Postgres by this app; Supabase Auth manages credentials.
+No Supabase or Postgres setup is needed for the app's material history. Saved item records are stored in the current browser only, and the Generate smart report and Build offline report actions do not require sign-in. The smart report sends sanitized saved-record fields to Gemini; photos and thumbnails are not sent. Clearing this browser's site data removes its saved records.

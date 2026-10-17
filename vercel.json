@@ -2,6 +2,9 @@
   "functions": {
     "api/analyze.js": {
       "maxDuration": 60
+    },
+    "api/report.js": {
+      "maxDuration": 60
     }
   }
 }
