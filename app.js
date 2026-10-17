@@ -565,7 +565,6 @@ function recordNeedsVisualReview(record) {
   return Boolean(
     estimate.hazardous || record.category === "hazardous" || record.category === "unknown" ||
     confidence === null || confidence < 0.6 ||
-    (Array.isArray(estimate.alternativeCategories) && estimate.alternativeCategories.length > 0) ||
     ["ambiguous_material", "poor_image", "insufficient_evidence", "conflicting_analyses"].includes(estimate.confidenceBasis)
   );
 }
