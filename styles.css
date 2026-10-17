@@ -752,3 +752,4 @@
   .header-cta{gap:5px;padding:0 8px;font-size:8px}
   .menu-toggle{padding:6px}
 }
+@media(min-width:1200px){body{zoom:1.25}}

@@ -39,7 +39,7 @@ Photo analysis displays the compact visual estimate as soon as Gemini returns it
 
 The `.env` file is ignored by Git and blocked from the static web server. The API key is read only by the local server; it is not placed in the page, browser storage, or frontend JavaScript. Do not paste the key into chat, screenshots, source code, or a committed file. If you suspect it was exposed, revoke it in AI Studio and create a replacement.
 
-Use the header theme button to cycle **Light**, **Dark**, and **3D** themes. The selected theme is saved in this browser; on first visit, the operating system's light/dark preference is used. Live camera preview requires browser permission and a secure context (localhost is supported); if live preview is unavailable, use the device camera/file-picker fallback.
+On desktop screens at least 1200px wide, the site layout defaults to 125% CSS zoom; the browser's own zoom setting is unchanged, and tablet/mobile layouts retain their existing responsive scale. Use the header theme button to cycle **Light**, **Dark**, and **3D** themes. The selected theme is saved in this browser; on first visit, the operating system's light/dark preference is used. Live camera preview requires browser permission and a secure context (localhost is supported); if live preview is unavailable, use the device camera/file-picker fallback.
 
 ## What gets sent to Gemini
 
