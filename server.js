@@ -266,7 +266,10 @@ function validateAnalysis(analysis) {
   let confidenceBasis = Object.hasOwn(confidenceCaps, analysis.confidenceBasis)
     ? analysis.confidenceBasis
     : "insufficient_evidence";
-  const modelConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
+  const normalizedConfidence = Number.isFinite(confidence)
+    ? confidence > 1 && confidence <= 100 ? confidence / 100 : confidence
+    : 0;
+  const modelConfidence = Math.max(0, Math.min(1, normalizedConfidence));
   const hazardous = analysis.category === "hazardous" || analysis.hazardous === true;
   const alternatives = Array.isArray(analysis.alternativeCategories)
     ? [...new Set(analysis.alternativeCategories.filter((category) =>
@@ -282,20 +285,27 @@ function validateAnalysis(analysis) {
       !visualEvidence.some((item) => /\b(label|symbol|code|printed|text|marking|marked|reads|says)\b/i.test(item))) {
     confidenceBasis = "distinctive_visual_cues";
   }
+  if (alternatives.length && confidenceBasis !== "poor_image") {
+    confidenceBasis = "ambiguous_material";
+  }
   const evidenceCeiling = analysis.category === "unknown" ? 0.59 : confidenceCaps[confidenceBasis];
   const safeConfidence = Math.min(modelConfidence, evidenceCeiling);
   const finalCategory = safeConfidence < 0.6 && !hazardous ? "unknown" : analysis.category;
-  const needsReview = hazardous || finalCategory === "unknown" ||
-    analysis.needsReview === true || alternatives.length > 0 ||
+  const needsReview = hazardous || finalCategory === "unknown" || alternatives.length > 0 ||
     confidenceBasis === "poor_image" || confidenceBasis === "insufficient_evidence";
+  const reviewReason = hazardous
+    ? "Potential hazard: keep it separate from ordinary waste and check an authorized local service."
+    : alternatives.length
+      ? `Other plausible materials: ${alternatives.join(", ")}. Check a visible label or marking before disposal.`
+      : confidenceBasis === "poor_image"
+        ? "Photo quality limits this estimate. Try a closer, well-lit photo."
+        : finalCategory === "unknown" || confidenceBasis === "insufficient_evidence"
+          ? "The photo does not show enough material evidence. A close-up of a label or material marking may help."
+          : "";
   const safeAction = hazardous
     ? "Potential hazard: do not put this in household recycling or general waste. Avoid handling damaged or leaking items and consult an appropriate local authority or authorized collection point."
     : needsReview
-      ? alternatives.length
-        ? `This is the leading visual estimate, but ${alternatives.map((category) =>
-          category === "unknown" ? "the material may remain unclear" : category
-        ).join(", ")} is also plausible. Verify the material before acting.`
-        : "This is an AI visual estimate that needs a manual check before you act."
+      ? reviewReason
       : cleanText(analysis.action, "Check local guidance before disposing of this item.");
 
   return {
@@ -309,6 +319,7 @@ function validateAnalysis(analysis) {
     alternativeCategories: alternatives,
     condition: ["clean", "soiled", "damaged", "unknown"].includes(analysis.condition) ? analysis.condition : "unknown",
     needsReview,
+    reviewReason,
     hazardous,
     action: safeAction,
     preparation: hazardous
@@ -318,7 +329,7 @@ function validateAnalysis(analysis) {
       ? "Do not reuse or repurpose a potentially hazardous item."
       : cleanText(analysis.reuseOption, "Consider safe reuse if the item is intact and suitable."),
     explanation: cleanText(analysis.explanation, "This is an AI-generated visual estimate, not a verified local recycling instruction."),
-    caveat: "AI visual estimate only. Local disposal rules are not connected or verified. Hazardous items need cautious human review.",
+    caveat: reviewReason || "AI visual estimate only; material composition and local disposal acceptance are not independently verified.",
   };
 }
 
@@ -506,7 +517,7 @@ async function handleApi(request, response, pathname) {
 
       const compactPromise = callGemini(
         `Carefully inspect this photo for EcoSnapAI and classify the main visible item. First identify whether there is one clear focal item; note only directly visible shape, parts, readable words/symbols, material cues, condition, and image limitations. Compare plausible material categories before deciding. Return one JSON object with exactly these fields: {"category":"plastic|paper|metal|glass|organic|hazardous|unknown","itemName":"short plain name","material":"visible material with uncertainty","confidence":0.0,"confidenceBasis":"explicit_label|distinctive_visual_cues|ambiguous_material|poor_image|insufficient_evidence","visualEvidence":["short directly visible fact"],"alternativeCategories":["category"],"confidenceReason":"brief reason for score","condition":"clean|soiled|damaged|unknown","needsReview":false,"hazardous":false,"action":"safe next step","preparation":"safe preparation","reuseOption":"safe reuse option or not suitable","explanation":"brief evidence-first explanation"}.
-Score the support from this image only, not your general certainty, and never inflate a score. A readable material label/recycling code or truly unmistakable visual construction may support 0.90-0.97; distinctive but not unique visual cues support at most 0.89; unresolved plausible alternatives or material inferred only from appearance support at most 0.59; blur, darkness, severe crop, occlusion, glare, tiny subject, or multiple overlapping items support at most 0.39. The server applies these ceilings. Use unknown when the material cannot be distinguished. State uncertainty and alternatives rather than guessing. visualEvidence must contain 1-4 short facts that can actually be seen; do not claim an absent/unreadable label is present. Do not claim resin, composition, recyclability, contamination, or hazard unless directly evidenced. Condition is visual only. Disposal/recycling rules vary by location and must not be inferred. For batteries, chemicals, e-waste, medical waste, sharps, leaks, or possible hazards, prioritize caution; never advise opening, testing, or handling them.`,
+Score the support from this image only, not your general certainty, and never inflate a score. A readable material label/recycling code or truly unmistakable visual construction may support 0.90-0.97; distinctive but not unique visual cues support at most 0.89; unresolved plausible alternatives or material inferred only from appearance support at most 0.59; blur, darkness, severe crop, occlusion, glare, tiny subject, or multiple overlapping items support at most 0.39. The server applies these ceilings. Use unknown when the material cannot be distinguished. State uncertainty and alternatives rather than guessing. visualEvidence must contain 1-4 short facts that can actually be seen; do not claim an absent/unreadable label is present. Do not claim resin, composition, recyclability, contamination, or hazard unless directly evidenced. Condition is visual only. Set needsReview true only when the photo leaves material/category uncertain, image quality prevents a useful estimate, or a potential hazard needs cautious handling; do not set it merely because local disposal rules are unverified. Set it false when one nonhazard category is well supported and no plausible alternative is evident. Disposal/recycling rules vary by location and must not be inferred. For batteries, chemicals, e-waste, medical waste, sharps, leaks, or possible hazards, prioritize caution; never advise opening, testing, or handling them.`,
         imagePayload,
         900,
         30000,

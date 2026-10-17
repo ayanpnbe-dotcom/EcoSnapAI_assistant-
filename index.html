@@ -170,10 +170,10 @@
                   <option value="hazardous">Potentially hazardous</option>
                 </select><button type="button" class="button button-dark button-small" id="review-photo">Review category</button></div>
               </div>
-              <label class="location-field" for="location-select">Guidance context
-                <select id="location-select"><option value="demo-campus">Campus demo rules · unverified</option><option value="unconfigured">My local rules · not configured</option></select>
+              <label class="location-field" for="location-input">City or region for context <span>(optional)</span>
+                <input id="location-input" type="text" maxlength="120" autocomplete="address-level2" placeholder="Enter your city or region" />
               </label>
-              <p class="privacy-note"><span aria-hidden="true">⌑</span> Local preview stays on-device. When you choose AI analysis, an optimized copy of the photo is sent to Gemini via this server.</p>
+              <p class="privacy-note"><span aria-hidden="true">⌑</span> Your city is optional and is sent only with an analysis you start. Local recycling rules are not verified.</p>
             </div>
             <div class="scan-result" aria-live="polite">
               <div class="result-top"><span><i></i> ECOSNAPAI REVIEW</span><span id="result-mode">DEMO FIXTURE</span></div>
@@ -192,7 +192,7 @@
                 <div class="safety-alert" id="safety-alert" role="alert" hidden></div>
                 <div class="review-tags" id="review-tags" aria-label="Key properties" hidden></div>
                 <div class="advice-box"><span class="advice-icon" aria-hidden="true">✳</span><div><span class="overline">SUGGESTED NEXT STEP</span><p id="result-advice">Empty and rinse it. Check whether your local program accepts this packaging.</p></div></div>
-                <p class="rule-source" id="rule-source">Prototype rule · Campus demo rules (unverified)</p>
+                <p class="rule-source" id="rule-source">General prototype guidance · local rules unverified</p>
                 <div class="explanation" id="explanation" hidden></div>
                 <details class="ai-report" id="ai-report" hidden><summary>AI item report</summary><div id="ai-report-content"></div></details>
                 <details class="followup-questions" id="followup-questions" hidden><summary>Follow-up questions</summary><p class="followup-intro">The visual estimate needs a few more details before it is complete. Your answers stay in this browser and are reused only for this analysis.</p><div class="followup-fields" id="followup-fields"></div><div class="followup-actions"><button type="button" class="button button-dark button-small" id="submit-followup">Submit answers &amp; re-analyze</button></div></details>

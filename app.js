@@ -545,6 +545,17 @@ function loadRecordsFromStorage(key = storageKey) {
   }
 }
 
+function recordNeedsVisualReview(record) {
+  const estimate = record?.aiSummary;
+  if (!estimate) return false;
+  return Boolean(
+    estimate.hazardous || record.category === "hazardous" || record.category === "unknown" ||
+    !Number.isFinite(estimate.confidence) || estimate.confidence < 0.6 ||
+    (Array.isArray(estimate.alternativeCategories) && estimate.alternativeCategories.length > 0) ||
+    ["ambiguous_material", "poor_image", "insufficient_evidence", "conflicting_analyses"].includes(estimate.confidenceBasis)
+  );
+}
+
 function savePendingLocalRecords() {
   try {
     if (pendingLocalRecords.length) {
@@ -571,8 +582,16 @@ function persistRecords(syncCloud = true) {
   }
 }
 
+function resetAnalyzeButton(disabled = !modelConfigured || !currentPhotoName) {
+  const button = $("#analyze-photo");
+  button.classList.remove("is-loading");
+  button.innerHTML = button.dataset.originalLabel || "<span>✳</span> Analyze photo with Gemini <span aria-hidden=\"true\">↗</span>";
+  button.disabled = disabled;
+}
+
 function setSample(category) {
   stopCamera();
+  resetAnalyzeButton(true);
   if (currentPhotoUrl) {
     URL.revokeObjectURL(currentPhotoUrl);
     currentPhotoUrl = "";
@@ -638,15 +657,13 @@ function resetDetailedSections() {
 
 function renderResult() {
   const item = categories[currentCategory];
+  const locationValue = $("#location-input").value.trim();
   $("#result-category").textContent = item.label;
-  const configuredLocation = $("#location-select").value !== "unconfigured";
   $("#result-advice").textContent = currentAiAnalysis
     ? currentAiAnalysis.action
-    : !configuredLocation
-      ? "Local rules are not configured for this location. Use a local authority's guidance before disposing of this item."
-      : item.advice;
+    : item.advice;
   $("#confidence-badge").textContent = currentAiAnalysis
-    ? `${currentAiAnalysis.needsReview ? "Human review needed" : "Visual confidence"} · ${Math.round(currentAiAnalysis.confidence * 100)}%`
+    ? `${currentAiAnalysis.hazardous ? "Safety check needed" : currentAiAnalysis.needsReview ? "Needs another look" : "Visual confidence"} · ${Math.round(currentAiAnalysis.confidence * 100)}%`
     : currentIsSample ? "Demo fixture · not model output" : "Manual review · no confidence score";
   if (currentAiAnalysis) {
     const basisLabels = {
@@ -666,9 +683,7 @@ function renderResult() {
     : item.sampleCaption;
   $("#rule-source").textContent = currentAiAnalysis
     ? "Gemini visual estimate · not a verified local recycling rule"
-    : !configuredLocation
-      ? "No applicable local rule configured · location-specific advice withheld"
-      : "Prototype rule · Campus demo rules (unverified)";
+    : `General prototype guidance${locationValue ? ` · ${locationValue} entered as context` : ""} · local rules unverified`;
   $("#ai-report").hidden = !currentAiAnalysis;
   if (currentAiAnalysis) {
     $("#ai-report-content").replaceChildren();
@@ -677,7 +692,7 @@ function renderResult() {
       ["Category", item.label],
       ["Visible material", currentAiAnalysis.material],
       ["Condition", currentAiAnalysis.condition],
-      ["Visual evidence score", `${Math.round(currentAiAnalysis.confidence * 100)}% · ${currentAiAnalysis.confidenceReason}${currentAiAnalysis.needsReview ? " · human review recommended" : ""}`],
+      ["Visual evidence score", `${Math.round(currentAiAnalysis.confidence * 100)}% · ${currentAiAnalysis.confidenceReason}${currentAiAnalysis.needsReview ? " · another look recommended" : ""}`],
       ["Visible cues", currentAiAnalysis.visualEvidence?.length ? currentAiAnalysis.visualEvidence.join("; ") : currentAiAnalysis.explanation],
       ...(currentAiAnalysis.alternativeCategories?.length
         ? [["Other plausible categories", currentAiAnalysis.alternativeCategories.map((category) => categories[category]?.label || category).join(", ")]]
@@ -704,7 +719,6 @@ function renderResult() {
 const userContextFields = ["location", "user_goal", "weight", "weight_unit", "condition", "contents_or_previous_use", "additional_notes"];
 
 function buildUserContext() {
-  const locationValue = $("#location-select").value;
   return {
     location: "",
     user_goal: "",
@@ -714,7 +728,7 @@ function buildUserContext() {
     contents_or_previous_use: "",
     additional_notes: "",
     ...currentUserContext,
-    location: currentUserContext.location || (locationValue === "unconfigured" ? "" : "Campus demo rules (unverified prototype context)"),
+    location: $("#location-input").value.trim(),
     condition: currentAssessmentAnswers.condition || currentUserContext.condition || "",
     contents_or_previous_use: currentAssessmentAnswers.previousContents || currentUserContext.contents_or_previous_use || "",
   };
@@ -890,6 +904,7 @@ function submitFollowupAnswers() {
     const value = field.value.trim();
     if (value) currentUserContext[key] = value;
     else delete currentUserContext[key];
+    if (key === "location") $("#location-input").value = value;
   });
   announce("Answers saved. Re-analyzing with the extra details.");
   analyzePhoto();
@@ -924,7 +939,7 @@ function handlePhoto(file) {
   currentAnalysisModel = "";
   currentAnalysisAt = "";
   currentReportThumbnail = "";
-  $("#analyze-photo").disabled = !modelConfigured;
+  resetAnalyzeButton(!modelConfigured);
   $("#photo-preview").src = currentPhotoUrl;
   $("#photo-preview").alt = `Uploaded photo: ${file.name}`;
   $("#photo-preview").hidden = false;
@@ -941,12 +956,14 @@ function handlePhoto(file) {
   $("#result-advice").textContent = "This photo has not been classified by a model. Review it manually to see prototype guidance.";
   $("#confidence-badge").textContent = "No model prediction";
   $("#preview-caption").textContent = `PHOTO PREVIEW · ${file.name}`.toUpperCase();
-  $("#rule-source").textContent = "Prototype rule · selected category and demo context";
+  $("#rule-source").textContent = "General prototype guidance · local rules unverified";
   $("#result-disclaimer").textContent = "Photo preview only; no model result yet. Choose Analyze photo with Gemini or review the category manually.";
   $("#explanation").hidden = true;
 }
 
 function reviewPhoto() {
+  currentAnalysisId = "";
+  resetAnalyzeButton(!modelConfigured || !currentPhotoName);
   if (currentCategory !== $("#manual-category").value) currentAssessmentAnswers = {};
   currentCategory = $("#manual-category").value;
   currentIsSample = false;
@@ -975,7 +992,7 @@ function saveScan() {
     category: currentCategory,
     itemName: currentAiAnalysis?.itemName || currentPhotoName || item.item,
     source: currentSource,
-    location: $("#location-select").value,
+    location: $("#location-input").value.trim(),
     status: stageOrder[0],
     createdAt: now,
     analysisAt: currentSource === "ai-model" ? currentAnalysisAt : null,
@@ -995,6 +1012,7 @@ function saveScan() {
       visualEvidence: currentAiAnalysis.visualEvidence,
       alternativeCategories: currentAiAnalysis.alternativeCategories,
       needsReview: currentAiAnalysis.needsReview,
+      reviewReason: currentAiAnalysis.reviewReason,
       hazardous: currentAiAnalysis.hazardous,
       action: currentAiAnalysis.action,
       preparation: currentAiAnalysis.preparation,
@@ -1390,17 +1408,12 @@ function renderAssessmentPanel(renderQuestions = true) {
     $("#result-advice").textContent = assessment.action;
     $("#rule-source").textContent = "Transparent condition rules · material category plus user-provided answers · local acceptance unverified";
   } else {
-    const configuredLocation = $("#location-select").value !== "unconfigured";
     $("#result-advice").textContent = currentAiAnalysis
       ? currentAiAnalysis.action
-      : !configuredLocation
-        ? "Local rules are not configured for this location. Use a local authority's guidance before disposing of this item."
-        : categories[currentCategory].advice;
+      : categories[currentCategory].advice;
     $("#rule-source").textContent = currentAiAnalysis
       ? "Gemini visual estimate · not a verified local recycling rule"
-      : !configuredLocation
-        ? "No applicable local rule configured · location-specific advice withheld"
-        : "Prototype rule · Campus demo rules (unverified)";
+      : `General prototype guidance${$("#location-input").value.trim() ? ` · ${$("#location-input").value.trim()} entered as context` : ""} · local rules unverified`;
   }
   const status = assessment.manualReview ? "Human review suggested" : "Rule-based guidance";
   const panelQuestions = assessmentQuestions[currentCategory] || [];
@@ -1462,7 +1475,9 @@ function renderDashboard() {
     return matchesStatus && matchesCategory && matchesDate;
   });
   $("#metric-total").textContent = String(records.length);
-  $("#metric-review").textContent = String(records.filter((record) => record.category === "unknown" || record.source === "manual-review" || record.aiSummary?.needsReview).length);
+  $("#metric-review").textContent = String(records.filter((record) =>
+    record.category === "unknown" || record.source === "manual-review" || recordNeedsVisualReview(record)
+  ).length);
   $("#metric-recovery").textContent = String(records.filter((record) => record.status === "recovery").length);
   $("#metric-reuse").textContent = String(records.filter((record) => record.status === "reuse").length);
   renderCategoryBreakdown();
@@ -1508,7 +1523,11 @@ function renderDashboard() {
     date.textContent = new Date(record.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
     const location = document.createElement("span");
     location.className = "material-meta";
-    location.textContent = record.location === "demo-campus" ? "Campus demo · unverified" : "Local rules not configured";
+    location.textContent = record.location && record.location !== "demo-campus"
+      ? `${record.location} · local rules unverified`
+      : record.location === "demo-campus"
+        ? "Legacy campus demo · unverified"
+        : "No city supplied · local rules unverified";
     const status = document.createElement("span");
     status.className = "stage-pill";
     status.dataset.stage = record.status;
@@ -1620,7 +1639,7 @@ function loadDemoSet() {
       itemName: categories[category].item,
       source: "sample",
       demoBatch: "starter",
-      location: "demo-campus",
+      location: "",
       status: stageOrder[index % stageOrder.length],
       createdAt,
       events: [{ status: stageOrder[index % stageOrder.length], at: createdAt, note: "Sample demo record; lifecycle stage is simulated" }],
@@ -1771,6 +1790,28 @@ async function makeReportThumbnail(file) {
   return dataUrl;
 }
 
+function attachReportThumbnail(analysisId, thumbnail) {
+  if (!thumbnail || currentAnalysisId !== analysisId) return;
+  currentReportThumbnail = thumbnail;
+  if (!records.some((record) => record.analysisId === analysisId)) return;
+
+  const previousRecords = records;
+  let retainedThumbnails = 0;
+  records = records.map((record) => {
+    const updatedRecord = record.analysisId === analysisId
+      ? { ...record, photoThumbnail: thumbnail }
+      : record;
+    if (!updatedRecord.photoThumbnail) return updatedRecord;
+    retainedThumbnails += 1;
+    return retainedThumbnails <= 4 ? updatedRecord : { ...updatedRecord, photoThumbnail: "" };
+  });
+  if (!persistRecords()) {
+    records = previousRecords;
+    return;
+  }
+  renderDashboard();
+}
+
 async function analyzePhoto() {
   const file = currentPhotoFile;
   if (!file) {
@@ -1783,12 +1824,12 @@ async function analyzePhoto() {
   button.disabled = true;
   button.classList.add("is-loading");
   button.dataset.originalLabel = button.innerHTML;
-  button.innerHTML = "Analyzing photo…";
+  button.textContent = "Preparing photo…";
   const followupSubmit = $("#submit-followup");
   if (followupSubmit) followupSubmit.disabled = true;
   $("#result-mode").textContent = "GEMINI ANALYSIS";
   $("#result-category").textContent = "Looking closely…";
-  $("#result-advice").textContent = "Gemini is reviewing the image. Please wait.";
+  $("#result-advice").textContent = "Preparing an optimized photo for Gemini…";
   $("#confidence-badge").textContent = "Analysis in progress";
   $("#result-disclaimer").textContent = "The image is sent to Google Gemini through the local server for this analysis.";
   $("#ai-report").hidden = true;
@@ -1797,6 +1838,9 @@ async function analyzePhoto() {
   let analyzeRequestFailed = false;
   try {
     const image = await readFileAsBase64(file);
+    if (currentAnalysisId !== analysisId) return;
+    button.textContent = "Gemini is analyzing…";
+    $("#result-advice").textContent = "The quick estimate appears first; the detailed analysis runs in parallel.";
     const context = buildUserContext();
     const requestBody = JSON.stringify({ ...image, context, compactOnly: true });
     const detailedRequest = fetch("/api/analyze", {
@@ -1837,16 +1881,14 @@ async function analyzePhoto() {
     currentAnalysisModel = result.model;
     currentAnalysisAt = new Date().toISOString();
     currentReportThumbnail = "";
-    try {
-      currentReportThumbnail = await makeReportThumbnail(file);
-    } catch (thumbnailError) {
-      console.warn("EcoSnapAI could not prepare an optional report thumbnail.", thumbnailError);
-    }
     $("#result-mode").textContent = `AI VISUAL ESTIMATE · ${result.model}`;
     $("#result-disclaimer").textContent = "AI-generated visual estimate. Not a verified local rule or proof an item is recyclable. Review uncertain and hazardous items carefully.";
     renderResult();
     renderDetailedAnalysis();
     renderFollowupQuestions();
+    void makeReportThumbnail(file)
+      .then((thumbnail) => attachReportThumbnail(analysisId, thumbnail))
+      .catch((thumbnailError) => console.warn("EcoSnapAI could not prepare an optional report thumbnail.", thumbnailError));
     if (!currentDetailedAnalysis) {
       const detailedPanel = $("#detailed-analysis");
       const detailedContent = $("#detailed-analysis-content");
@@ -1876,6 +1918,7 @@ async function analyzePhoto() {
             visualEvidence: reconciledAnalysis.visualEvidence,
             alternativeCategories: reconciledAnalysis.alternativeCategories,
             needsReview: reconciledAnalysis.needsReview,
+            reviewReason: reconciledAnalysis.reviewReason,
             action: reconciledAnalysis.action,
             explanation: reconciledAnalysis.explanation,
           };
@@ -1891,7 +1934,7 @@ async function analyzePhoto() {
         }
       });
     }
-    announce(result.analysis.needsReview ? "AI review complete — please check this uncertain result." : "AI review complete. Check local disposal rules before acting.");
+    announce(result.analysis.needsReview ? "AI estimate ready — another look is recommended for this uncertain result." : "AI estimate ready. Check local disposal rules before acting.");
   } catch (error) {
     if (currentAnalysisId !== analysisId) return;
     if (analyzeRequestFailed) {
@@ -1905,7 +1948,6 @@ async function analyzePhoto() {
     $("#result-disclaimer").textContent = "No model result was produced. You can retry the analysis or select a category for manual review.";
     currentAiAnalysis = null;
     currentDetailedAnalysis = null;
-    currentAnalysisId = "";
     $("#detailed-analysis").hidden = true;
     $("#followup-questions").hidden = true;
     currentAnalysisModel = "";
@@ -1913,10 +1955,11 @@ async function analyzePhoto() {
     currentReportThumbnail = "";
     announce(error.message || "Could not analyze this photo.");
   } finally {
-    button.classList.remove("is-loading");
-    button.innerHTML = button.dataset.originalLabel || "<span>✳</span> Analyze photo with Gemini <span aria-hidden=\"true\">↗</span>";
-    button.disabled = !modelConfigured || !currentPhotoName;
-    if (followupSubmit) followupSubmit.disabled = false;
+    if (currentAnalysisId === analysisId) {
+      resetAnalyzeButton(!modelConfigured || !currentPhotoName);
+      if (!currentAiAnalysis) currentAnalysisId = "";
+      if (followupSubmit) followupSubmit.disabled = false;
+    }
   }
 }
 
@@ -1936,6 +1979,7 @@ function reconcileDetailedEstimate(analysis, detailed) {
     confidenceReason,
     alternativeCategories: [...new Set([...(analysis.alternativeCategories || []), detailedCategory])].slice(0, 3),
     needsReview: true,
+    reviewReason: `The quick and detailed analyses disagree (${compactLabel} vs. ${detailedLabel}). A closer view of material labels or markings may clarify the item.`,
     hazardous,
     action: hazardous
       ? "One visual pass flagged a possible hazardous item. Do not place it in household recycling; avoid handling it and check an appropriate local safety authority."
@@ -2047,7 +2091,7 @@ function itemReportMarkdown(record, generatedAt = new Date().toISOString()) {
     `- Reusable: ${assessment.classification.some((entry) => entry.startsWith("Reuse")) ? "Possible; suitability not certified" : "Not confirmed"}`,
     `- Biodegradable: ${record.category === "organic" ? "Organic material category; not certified" : "Unknown / not established"}`,
     `- Potentially hazardous: ${assessment.tags.some((tag) => tag.label === "Potentially hazardous") ? "Yes / precautionary" : "Not identified; this is not proof of harmlessness"}`,
-    `- Uncertainty / manual-review flag: ${assessment.manualReview || estimate?.needsReview || record.category === "unknown" ? "Review suggested" : "No flag stored; AI output remains an estimate"}`,
+    `- Uncertainty / manual-review flag: ${assessment.manualReview || recordNeedsVisualReview(record) ? "Review suggested" : "No flag stored; AI output remains an estimate"}`,
     `- AI-estimated condition (separate from user answers): ${estimate?.condition ? reportSafeLine(estimate.condition) : "Unknown / not estimated"}`,
     "",
     "## Condition and preparation",
@@ -2139,7 +2183,7 @@ function renderReportDashboard() {
   const recordStorage = "this browser's local storage";
   const aiCount = records.filter((record) => record.source === "ai-model" && record.aiSummary).length;
   const reviewCount = records.filter((record) =>
-    record.category === "unknown" || record.source === "manual-review" || record.aiSummary?.needsReview
+    record.category === "unknown" || record.source === "manual-review" || recordNeedsVisualReview(record)
   ).length;
   const itemCards = records.length
     ? records.map((record) => {
@@ -2169,9 +2213,9 @@ function renderReportDashboard() {
           </dl>`
         : `<p class="report-no-estimate">${record.source === "sample" ? "Demonstration fixture; not a computer-vision result." : "No AI prediction is stored for this manual review."}</p>`;
       const warning = record.category === "hazardous" || estimate?.hazardous
-        ? `<p class="report-warning" role="note"><strong>Potential hazard:</strong> ${escapeHtml(estimate?.caveat || "Keep separate from ordinary waste. Do not open, test, burn, or handle damaged items; check with an authorized local service.")}</p>`
-        : estimate?.needsReview || record.category === "unknown"
-          ? `<p class="report-warning report-warning-review" role="note"><strong>Needs human verification:</strong> ${escapeHtml(estimate?.caveat || "The item is uncertain; do not rely on a visual estimate as a verified disposal instruction.")}</p>`
+        ? `<p class="report-warning" role="note"><strong>Potential hazard:</strong> ${escapeHtml(estimate?.reviewReason || estimate?.action || "Keep separate from ordinary waste. Do not open, test, burn, or handle damaged items; check with an authorized local service.")}</p>`
+        : recordNeedsVisualReview(record)
+          ? `<p class="report-warning report-warning-review" role="note"><strong>Uncertain visual estimate:</strong> ${escapeHtml(estimate?.reviewReason || "A closer, well-lit photo or a visible material label may help clarify this item.")}</p>`
           : "";
       const action = estimate?.action || category.advice;
       const events = [...record.events].sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
@@ -2243,13 +2287,13 @@ function buildOfflineProjectReport() {
     ["Sample/demo records", records.filter((record) => record.source === "sample").length],
   ].map(([label, count]) => `- ${label}: ${count}`).join("\n");
   const needsReviewCount = records.filter((record) =>
-    record.category === "unknown" || record.source === "manual-review" || record.aiSummary?.needsReview
+    record.category === "unknown" || record.source === "manual-review" || recordNeedsVisualReview(record)
   ).length;
   const itemLines = records.length
     ? records.map((record) => {
       const estimate = record.aiSummary;
       const detail = estimate
-        ? `; AI visual estimate ${Number.isFinite(estimate.confidence) ? `${Math.round(estimate.confidence * 100)}% confidence` : "without a confidence score"}${estimate.needsReview ? ", human review recommended" : ""}`
+        ? `; AI visual estimate ${Number.isFinite(estimate.confidence) ? `${Math.round(estimate.confidence * 100)}% confidence` : "without a confidence score"}${recordNeedsVisualReview(record) ? ", another look recommended" : ""}`
         : "";
       return `- ${reportSafeLine(record.itemName) || "Unidentified item"} (ID ${reportSafeLine(record.id)}) — ${categories[record.category].label}; ${stageLabels[record.status]} (simulated); ${record.source === "ai-model" ? "AI-assisted estimate" : record.source === "manual-review" ? "manual review" : "sample data"}${detail}.`;
     }).join("\n")
@@ -2684,12 +2728,12 @@ $("#photo-lightbox").addEventListener("click", (event) => {
 $("#submit-followup").addEventListener("click", submitFollowupAnswers);
 $("#reset-scan").addEventListener("click", () => {
   setSample("plastic");
-  $("#location-select").value = "demo-campus";
+  $("#location-input").value = "";
   renderResult();
   announce("Scan reset to the plastic bottle sample.");
 });
 $("#review-photo").addEventListener("click", reviewPhoto);
-$("#location-select").addEventListener("change", renderResult);
+$("#location-input").addEventListener("input", renderResult);
 $("#assessment-panel").addEventListener("change", (event) => {
   const select = event.target.closest("[data-assessment-key]");
   if (!select) return;
@@ -2700,11 +2744,10 @@ $("#assessment-panel").addEventListener("change", (event) => {
 $("#explain-scan").addEventListener("click", () => {
   const explanation = $("#explanation");
   const item = categories[currentCategory];
-  explanation.textContent = $("#location-select").value === "unconfigured"
-    ? "No local rule is configured for this location, so EcoSnapAI cannot provide location-specific guidance. The explanation is based only on the reviewed category and prototype rule."
-    : currentAiAnalysis
-      ? `${currentAiAnalysis.explanation} ${currentAiAnalysis.caveat}`
-      : item.explanation;
+  const locationValue = $("#location-input").value.trim();
+  explanation.textContent = currentAiAnalysis
+    ? `${currentAiAnalysis.explanation} ${currentAiAnalysis.caveat}`
+    : `${item.explanation} ${locationValue ? `Your city (${locationValue}) is not checked against local rules. ` : ""}This prototype does not connect to verified local recycling rules.`;
   explanation.hidden = false;
 });
 $("#save-scan").addEventListener("click", saveScan);
