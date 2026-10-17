@@ -440,6 +440,13 @@
 :root[data-theme="dark"] .toast,:root[data-theme="3d"] .toast{color:var(--ink);background:var(--sage);border:1px solid var(--line)}
 :root[data-theme="dark"] .report-output :is(h1,h2,h3,h4,h5,p,span,small,strong,dt,dd,li,label,summary,code),
 :root[data-theme="3d"] .report-output :is(h1,h2,h3,h4,h5,p,span,small,strong,dt,dd,li,label,summary,code){color:var(--ink)}
+:root[data-theme="dark"] .report-output .report-category-badge,:root[data-theme="3d"] .report-output .report-category-badge{color:#304b36}
+:root[data-theme="dark"] .report-output .report-category-badge.category-organic,:root[data-theme="3d"] .report-output .report-category-badge.category-organic{color:#40571c}
+:root[data-theme="dark"] .report-output .report-category-badge.category-hazardous,:root[data-theme="3d"] .report-output .report-category-badge.category-hazardous{color:#773a27}
+:root[data-theme="dark"] .report-output .report-category-badge.category-unknown,:root[data-theme="3d"] .report-output .report-category-badge.category-unknown{color:#51406e}
+:root[data-theme="dark"] .report-output .report-category-badge.category-paper,:root[data-theme="3d"] .report-output .report-category-badge.category-paper{color:#665526}
+:root[data-theme="dark"] .report-output .report-category-badge.category-glass,:root[data-theme="3d"] .report-output .report-category-badge.category-glass{color:#285743}
+:root[data-theme="dark"] .report-output .report-category-badge.category-metal,:root[data-theme="3d"] .report-output .report-category-badge.category-metal{color:#354f63}
 :root[data-theme="dark"] .report-output :is(.report-item-stats>div,.report-recommendations>div,.report-checklist,.report-technical,.report-empty,.report-item-card),
 :root[data-theme="3d"] .report-output :is(.report-item-stats>div,.report-recommendations>div,.report-checklist,.report-technical,.report-empty,.report-item-card){border-color:var(--line);background:linear-gradient(145deg,var(--sage),var(--cream))}
 :root[data-theme="3d"] .report-output :is(.report-cover,.report-item-card,.report-kpi-grid article,.report-impact-grid article){box-shadow:0 18px 38px #05030b90,0 1px 0 #d4b5ff2a}
