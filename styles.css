@@ -753,3 +753,71 @@
   .menu-toggle{padding:6px}
 }
 @media(min-width:1200px){body{zoom:1.25}}
+
+.scan-heading{align-items:center;gap:clamp(24px,5vw,56px)}
+.scan-intro{
+  position:relative;
+  display:grid;
+  grid-template-columns:40px minmax(0,1fr);
+  align-items:start;
+  gap:15px;
+  width:min(100%,440px);
+  padding:21px 23px;
+  overflow:hidden;
+  border:1px solid color-mix(in srgb,var(--leaf) 24%,var(--line));
+  border-radius:20px;
+  background:linear-gradient(140deg,color-mix(in srgb,var(--sage) 35%,var(--cream)),var(--cream) 76%);
+  box-shadow:0 14px 32px color-mix(in srgb,var(--ink) 8%,transparent),inset 0 1px 0 #ffffffa8;
+}
+.scan-intro:after{
+  content:"";
+  position:absolute;
+  width:150px;
+  height:150px;
+  right:-78px;
+  top:-94px;
+  border:1px solid color-mix(in srgb,var(--leaf) 20%,transparent);
+  border-radius:50%;
+  box-shadow:0 0 0 18px color-mix(in srgb,var(--leaf) 5%,transparent),0 0 0 38px color-mix(in srgb,var(--leaf) 4%,transparent);
+  pointer-events:none;
+}
+.scan-intro-icon{
+  width:40px;
+  height:40px;
+  display:grid;
+  place-items:center;
+  border:1px solid color-mix(in srgb,var(--leaf) 24%,transparent);
+  border-radius:14px;
+  background:color-mix(in srgb,var(--sage) 72%,var(--cream));
+  color:var(--leaf);
+  font-size:18px;
+}
+.scan-intro-content{position:relative;z-index:1;min-width:0}
+.scan-intro-kicker{color:var(--leaf);font-size:8px;font-weight:700;letter-spacing:.16em}
+.scan-intro-content p{margin:7px 0 15px;color:var(--muted);font-size:12px;line-height:1.75}
+.scan-intro-steps{display:flex;flex-wrap:wrap;gap:7px;margin:0;padding:0;list-style:none}
+.scan-intro-steps li{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  min-height:25px;
+  padding:0 9px;
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:color-mix(in srgb,var(--cream) 82%,transparent);
+  color:var(--ink);
+  font-size:8px;
+  font-weight:600;
+  white-space:nowrap;
+}
+.scan-intro-steps b{color:var(--leaf);font-size:7px;letter-spacing:.05em}
+@media(max-width:980px){
+  .scan-heading{align-items:stretch;flex-direction:column;gap:21px}
+  .scan-intro{width:100%;max-width:620px}
+  .scan-workspace{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:680px){
+  .scan-intro{grid-template-columns:35px minmax(0,1fr);gap:12px;padding:17px;border-radius:16px}
+  .scan-intro-icon{width:35px;height:35px;border-radius:12px}
+  .scan-intro-content p{font-size:11px}
+}
