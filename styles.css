@@ -870,26 +870,33 @@
 :root[data-theme="3d"] .capability-card[data-reveal]{
   transition:opacity .8s var(--ease),transform .28s var(--ease),border-color .28s,background .28s,box-shadow .28s;
   transition-delay:var(--rd,0s);
+  --tile-tilt-x:0deg;
+  --tile-tilt-y:0deg;
 }
 :root[data-theme="3d"] .journey-card[data-reveal],
 :root[data-theme="3d"] .metric-card[data-reveal]{
   transition:opacity .8s var(--ease),transform .28s var(--ease),border-color .28s,box-shadow .28s;
   transition-delay:var(--rd,0s);
+  --tile-tilt-x:0deg;
+  --tile-tilt-y:0deg;
 }
 @media(hover:hover) and (prefers-reduced-motion:no-preference){
   :root[data-theme="3d"] .capability-card[data-reveal].is-visible:hover{
-    transform:translateY(-5px);
+    transform:perspective(900px) rotateX(var(--tile-tilt-x)) rotateY(var(--tile-tilt-y)) translateY(-5px);
     transition-delay:0s;
+    transform-style:preserve-3d;
     box-shadow:0 20px 44px #05030acc,0 0 0 1px #d4b5ff44;
   }
   :root[data-theme="3d"] .journey-card[data-reveal].is-visible:hover{
-    transform:translateY(-6px);
+    transform:perspective(1000px) rotateX(var(--tile-tilt-x)) rotateY(var(--tile-tilt-y)) translateY(-6px);
     transition-delay:0s;
+    transform-style:preserve-3d;
     box-shadow:0 24px 50px #05030acc,0 0 0 1px #d4b5ff44;
   }
   :root[data-theme="3d"] .metric-card[data-reveal].is-visible:hover{
-    transform:translateY(-5px);
+    transform:perspective(900px) rotateX(var(--tile-tilt-x)) rotateY(var(--tile-tilt-y)) translateY(-5px);
     transition-delay:0s;
+    transform-style:preserve-3d;
     border-color:#bda5ff88;
     box-shadow:0 22px 44px #05030acc,0 0 0 1px #d4b5ff44;
   }

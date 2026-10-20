@@ -3366,9 +3366,45 @@ function initUiMotion() {
       card.style.setProperty("--mx", `${event.clientX - bounds.left}px`);
       card.style.setProperty("--my", `${event.clientY - bounds.top}px`);
     });
+  });
+
+  const tileTiltAllowed = () =>
+    document.documentElement.dataset.theme === "3d" &&
+    !window.matchMedia("(prefers-reduced-motion: reduce)").matches &&
+    window.matchMedia("(hover: hover)").matches;
+  const tileTiltFrames = new WeakMap();
+  document.querySelectorAll(".capability-card, .journey-card, .metric-card").forEach((card) => {
+    card.addEventListener("pointermove", (event) => {
+      if (!tileTiltAllowed() || event.pointerType === "touch") return;
+      if (tileTiltFrames.has(card)) return;
+      const pointerX = event.clientX;
+      const pointerY = event.clientY;
+      const frame = window.requestAnimationFrame(() => {
+        tileTiltFrames.delete(card);
+        if (!card.isConnected || !tileTiltAllowed()) return;
+        const bounds = card.getBoundingClientRect();
+        if (!bounds.width || !bounds.height) return;
+        const offsetX = Math.min(1, Math.max(0, (pointerX - bounds.left) / bounds.width));
+        const offsetY = Math.min(1, Math.max(0, (pointerY - bounds.top) / bounds.height));
+        card.style.setProperty("--tile-tilt-x", `${((0.5 - offsetY) * 8).toFixed(2)}deg`);
+        card.style.setProperty("--tile-tilt-y", `${((offsetX - 0.5) * 10).toFixed(2)}deg`);
+      });
+      tileTiltFrames.set(card, frame);
+    });
     card.addEventListener("pointerleave", () => {
-      card.style.setProperty("--mx", "50%");
-      card.style.setProperty("--my", "50%");
+      const frame = tileTiltFrames.get(card);
+      if (frame) window.cancelAnimationFrame(frame);
+      tileTiltFrames.delete(card);
+      card.style.setProperty("--tile-tilt-x", "0deg");
+      card.style.setProperty("--tile-tilt-y", "0deg");
+      if (card.matches(".capability-card")) {
+        card.style.setProperty("--mx", "50%");
+        card.style.setProperty("--my", "50%");
+      }
+    });
+    card.addEventListener("pointercancel", () => {
+      card.style.setProperty("--tile-tilt-x", "0deg");
+      card.style.setProperty("--tile-tilt-y", "0deg");
     });
   });
 }
