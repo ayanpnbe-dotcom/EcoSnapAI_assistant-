@@ -117,6 +117,10 @@ let currentIsSample = true;
 let currentPhotoUrl = "";
 let currentPhotoName = "";
 let currentPhotoFile = null;
+let batchItems = [];
+let batchRunId = "";
+let batchProcessing = false;
+let batchReviewIndex = null;
 let currentSource = "sample";
 let currentAiAnalysis = null;
 let currentAnalysisId = "";
@@ -598,12 +602,89 @@ function persistRecords(syncCloud = true) {
 function resetAnalyzeButton(disabled = !modelConfigured || !currentPhotoName) {
   const button = $("#analyze-photo");
   button.classList.remove("is-loading");
-  button.innerHTML = button.dataset.originalLabel || "<span>✳</span> Analyze photo with Gemini <span aria-hidden=\"true\">↗</span>";
+  if (batchItems.length > 1) {
+    const retryCount = batchItems.filter((item) => item.status === "queued" || item.status === "failed").length;
+    disabled = disabled || batchProcessing || retryCount === 0;
+    button.innerHTML = retryCount
+      ? `<span>✳</span> ${batchItems.some((item) => item.status === "failed") ? "Retry" : "Analyze"} ${retryCount} photo${retryCount === 1 ? "" : "s"} separately <span aria-hidden="true">↗</span>`
+      : `<span>✳</span> Batch analysis complete <span aria-hidden="true">✓</span>`;
+  } else {
+    button.innerHTML = button.dataset.originalLabel || "<span>✳</span> Analyze photo with Gemini <span aria-hidden=\"true\">↗</span>";
+  }
   button.disabled = disabled;
+}
+
+function clearBatchSelection() {
+  batchRunId = "";
+  batchProcessing = false;
+  batchReviewIndex = null;
+  $("#photo-input").disabled = false;
+  $("#camera-trigger").disabled = false;
+  $("#camera-input").disabled = false;
+  document.querySelectorAll("[data-sample]").forEach((button) => { button.disabled = false; });
+  batchItems.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+  batchItems = [];
+  $("#batch-queue").hidden = true;
+  $("#batch-queue-list").replaceChildren();
+  $("#batch-progress").textContent = "";
+  $("#batch-results").hidden = true;
+  $("#batch-result-list").replaceChildren();
+  $("#save-scan").disabled = false;
+}
+
+function batchStatusLabel(status) {
+  return ({
+    queued: "Waiting",
+    analyzing: "Analyzing",
+    complete: "Ready to review",
+    failed: "Could not analyze",
+    saved: "Saved to your twin",
+  })[status] || "Waiting";
+}
+
+function renderBatchQueue() {
+  const queue = $("#batch-queue");
+  if (!batchItems.length) {
+    queue.hidden = true;
+    return;
+  }
+  queue.hidden = false;
+  $("#batch-queue-list").innerHTML = batchItems.map((item, index) =>
+    `<li><span class="batch-file-index">${String(index + 1).padStart(2, "0")}</span><span class="batch-file-name" title="${escapeHtml(item.file.name)}">${escapeHtml(item.file.name)}</span><span class="batch-file-status" data-status="${item.status}">${batchStatusLabel(item.status)}</span></li>`
+  ).join("");
+}
+
+function renderBatchResults() {
+  const results = $("#batch-results");
+  const visibleItems = batchItems.filter((item) => item.status === "complete" || item.status === "failed" || item.status === "saved");
+  results.hidden = visibleItems.length === 0;
+  if (!visibleItems.length) {
+    $("#batch-result-list").replaceChildren();
+    return;
+  }
+  $("#batch-result-list").innerHTML = visibleItems.map((item) => {
+    const index = batchItems.indexOf(item);
+    const result = item.result;
+    const content = item.status === "failed"
+      ? `<p class="batch-result-error">${escapeHtml(item.error || "This image could not be analyzed.")}</p>`
+      : `<p class="batch-result-category">${escapeHtml(categories[result.analysis.category]?.label || "Needs review")}</p>
+          <p class="batch-result-item">${escapeHtml(result.analysis.itemName || item.file.name)}</p>
+          <p class="batch-result-confidence">${escapeHtml(confidenceDisplay(result.analysis.confidence))} visual confidence · review uncertain results carefully</p>`;
+    const action = item.status === "failed"
+      ? `<button class="utility-button" type="button" data-batch-retry="${index}">Retry this photo</button>`
+      : item.status === "saved"
+        ? `<button class="utility-button" type="button" data-batch-review="${index}">View saved review</button>`
+        : `<button class="button button-dark button-small" type="button" data-batch-review="${index}">Open individual review <span aria-hidden="true">↗</span></button>`;
+    return `<article class="batch-result-card" data-status="${item.status}">
+      <img src="${escapeHtml(item.previewUrl)}" alt="Selected photo: ${escapeHtml(item.file.name)}" />
+      <div class="batch-result-copy"><span class="batch-result-filename">${escapeHtml(item.file.name)}</span>${content}<div class="batch-result-actions">${action}</div></div>
+    </article>`;
+  }).join("");
 }
 
 function setSample(category) {
   stopCamera();
+  clearBatchSelection();
   resetAnalyzeButton(true);
   if (currentPhotoUrl) {
     URL.revokeObjectURL(currentPhotoUrl);
@@ -927,8 +1008,9 @@ function submitFollowupAnswers() {
   analyzePhoto();
 }
 
-function handlePhoto(file) {
+function handlePhoto(file, { preserveBatch = false } = {}) {
   if (!file) return;
+  if (!preserveBatch) clearBatchSelection();
   stopCamera();
   const supported = ["image/png", "image/jpeg", "image/webp"].includes(file.type);
   if (!supported) {
@@ -976,6 +1058,62 @@ function handlePhoto(file) {
   $("#rule-source").textContent = "General prototype guidance · local rules unverified";
   $("#result-disclaimer").textContent = "Photo preview only; no model result yet. Choose Analyze photo with Gemini or review the category manually.";
   $("#explanation").hidden = true;
+}
+
+function handleSelectedPhotos(files) {
+  if (!files.length) return;
+  if (files.length > 5) {
+    announce("Choose no more than five photos at a time. No photos were added.");
+    return;
+  }
+  const unsupported = files.filter((file) => !["image/png", "image/jpeg", "image/webp"].includes(file.type));
+  const oversized = files.filter((file) => file.size > 5 * 1024 * 1024);
+  if (unsupported.length || oversized.length) {
+    const reasons = [];
+    if (unsupported.length) reasons.push(`${unsupported.length} file${unsupported.length === 1 ? " is" : "s are"} not PNG, JPG or WebP`);
+    if (oversized.length) reasons.push(`${oversized.length} photo${oversized.length === 1 ? " is" : "s are"} over 5 MB`);
+    announce(`${reasons.join("; ")}. Choose a valid set of up to five photos; none were added.`);
+    return;
+  }
+
+  clearBatchSelection();
+  if (files.length === 1) {
+    handlePhoto(files[0], { preserveBatch: true });
+    return;
+  }
+
+  handlePhoto(files[0], { preserveBatch: true });
+  const preparedItems = [];
+  try {
+    for (const file of files) preparedItems.push({
+      file,
+      previewUrl: URL.createObjectURL(file),
+      status: "queued",
+      result: null,
+      error: "",
+      context: null,
+      analysisId: "",
+      analysisAt: "",
+      thumbnail: "",
+    });
+  } catch (error) {
+    preparedItems.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+    clearBatchSelection();
+    announce("Could not prepare the selected photo previews. Please choose them again.");
+    console.error("EcoSnapAI could not create batch photo previews.", error);
+    return;
+  }
+  batchItems = preparedItems;
+  $("#manual-review").hidden = true;
+  $("#save-scan").disabled = true;
+  $("#result-mode").textContent = "SEPARATE-PHOTO BATCH";
+  $("#result-category").textContent = `${batchItems.length} photos ready`;
+  $("#result-advice").textContent = "Each photo will be analyzed on its own. You can review and save every result separately.";
+  $("#confidence-badge").textContent = "Ready to analyze";
+  $("#preview-caption").textContent = `BATCH PREVIEW · ${batchItems.length} INDIVIDUAL PHOTOS`;
+  $("#result-disclaimer").textContent = "These photos are analyzed separately, never combined into one scene. Select each result to review its evidence before saving.";
+  renderBatchQueue();
+  resetAnalyzeButton(!modelConfigured);
 }
 
 function reviewPhoto() {
@@ -1049,6 +1187,12 @@ function saveScan() {
   if (!persistRecords()) {
     records = previousRecords;
     return;
+  }
+  const savedBatchItem = batchItems.find((batchItem) => batchItem.analysisId && batchItem.analysisId === currentAnalysisId);
+  if (savedBatchItem) {
+    savedBatchItem.status = "saved";
+    renderBatchQueue();
+    renderBatchResults();
   }
   renderDashboard();
   updateTwinJourney();
@@ -1712,7 +1856,7 @@ async function checkModelStatus() {
     status.title = modelConfigured
       ? "Your API key is stored on the local server and is not sent to the browser."
       : "Photo analysis needs a configured API key on the local server; saved-data reporting works offline.";
-    $("#analyze-photo").disabled = !modelConfigured || !currentPhotoName;
+    resetAnalyzeButton(!modelConfigured || !currentPhotoName);
     $("#report-model-note").textContent = modelConfigured
       ? `Smart report available · ${result.model} · saved details stay local`
       : "The saved-data report works offline. Add a Gemini key for the smart narrative.";
@@ -1722,7 +1866,7 @@ async function checkModelStatus() {
     status.classList.remove("configured");
     status.querySelector("i").classList.remove("ready");
     status.querySelector("span").textContent = "AI status check unavailable · local demo still works";
-    $("#analyze-photo").disabled = true;
+    resetAnalyzeButton(true);
     $("#generate-report").disabled = false;
     $("#report-model-note").textContent = "The saved-data report works offline; start the local server for the smart narrative.";
   }
@@ -1830,6 +1974,7 @@ function attachReportThumbnail(analysisId, thumbnail) {
 }
 
 async function analyzePhoto() {
+  if (batchItems.length > 1 && batchReviewIndex === null) return analyzeBatch();
   const file = currentPhotoFile;
   if (!file) {
     announce("Add or take a photo before starting AI analysis.");
@@ -1840,6 +1985,10 @@ async function analyzePhoto() {
   const button = $("#analyze-photo");
   button.disabled = true;
   button.classList.add("is-loading");
+  $("#photo-input").disabled = true;
+  $("#camera-trigger").disabled = true;
+  $("#camera-input").disabled = true;
+  document.querySelectorAll("[data-sample]").forEach((sampleButton) => { sampleButton.disabled = true; });
   button.dataset.originalLabel = button.innerHTML;
   button.textContent = "Preparing photo…";
   const followupSubmit = $("#submit-followup");
@@ -1898,13 +2047,20 @@ async function analyzePhoto() {
     currentAnalysisModel = result.model;
     currentAnalysisAt = new Date().toISOString();
     currentReportThumbnail = "";
+    syncActiveBatchReview();
     $("#result-mode").textContent = `AI VISUAL ESTIMATE · ${result.model}`;
     $("#result-disclaimer").textContent = "AI-generated visual estimate. Not a verified local rule or proof an item is recyclable. Review uncertain and hazardous items carefully.";
     renderResult();
     renderDetailedAnalysis();
     renderFollowupQuestions();
     void makeReportThumbnail(file)
-      .then((thumbnail) => attachReportThumbnail(analysisId, thumbnail))
+      .then((thumbnail) => {
+        if (batchReviewIndex !== null && currentAnalysisId === analysisId) {
+          currentReportThumbnail = thumbnail;
+          syncActiveBatchReview();
+        }
+        attachReportThumbnail(analysisId, thumbnail);
+      })
       .catch((thumbnailError) => console.warn("EcoSnapAI could not prepare an optional report thumbnail.", thumbnailError));
     if (!currentDetailedAnalysis) {
       const detailedPanel = $("#detailed-analysis");
@@ -1921,6 +2077,7 @@ async function analyzePhoto() {
           renderResult();
           renderDetailedAnalysis();
           renderFollowupQuestions();
+          syncActiveBatchReview();
         }
         let updatedSavedRecord = false;
         records.forEach((record) => {
@@ -1976,6 +2133,171 @@ async function analyzePhoto() {
       resetAnalyzeButton(!modelConfigured || !currentPhotoName);
       if (!currentAiAnalysis) currentAnalysisId = "";
       if (followupSubmit) followupSubmit.disabled = false;
+    }
+  }
+}
+
+function openBatchReview(index) {
+  const item = batchItems[index];
+  if (!item || !item.result || !["complete", "saved"].includes(item.status)) {
+    announce("That photo does not have a completed analysis to review yet.");
+    return;
+  }
+  handlePhoto(item.file, { preserveBatch: true });
+  batchReviewIndex = index;
+  currentCategory = item.result.analysis.category;
+  currentAssessmentAnswers = {};
+  currentIsSample = false;
+  currentSource = "ai-model";
+  currentAiAnalysis = item.result.analysis;
+  currentAnalysisId = item.analysisId;
+  currentAnalysisModel = item.result.model;
+  currentAnalysisAt = item.analysisAt;
+  currentReportThumbnail = item.thumbnail;
+  currentDetailedAnalysis = item.result.detailed;
+  currentUserContext = { ...(item.context || {}) };
+  $("#manual-review").hidden = true;
+  $("#result-mode").textContent = `AI VISUAL ESTIMATE · ${item.result.model}`;
+  $("#result-disclaimer").textContent = "AI-generated visual estimate for this photo only. Not a verified local rule or proof an item is recyclable. Review uncertain and hazardous items carefully.";
+  $("#save-scan").disabled = item.status === "saved";
+  renderResult();
+  renderDetailedAnalysis();
+  renderFollowupQuestions();
+  resetAnalyzeButton(!modelConfigured);
+  if (item.status === "saved") {
+    announce("This photo has already been saved to your material twin.");
+  } else {
+    announce("Individual photo review ready. Check the details, then save this item to your twin.");
+  }
+  $(".scan-result").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function syncActiveBatchReview() {
+  const item = batchReviewIndex === null ? null : batchItems[batchReviewIndex];
+  if (!item || !currentAnalysisId) return;
+  item.result = {
+    analysis: currentAiAnalysis,
+    detailed: currentDetailedAnalysis,
+    model: currentAnalysisModel,
+  };
+  item.analysisId = currentAnalysisId;
+  item.analysisAt = currentAnalysisAt;
+  item.context = { ...currentUserContext };
+  item.thumbnail = currentReportThumbnail;
+  if (item.status !== "saved") item.status = "complete";
+  renderBatchQueue();
+  renderBatchResults();
+}
+
+async function analyzeBatch(onlyIndex = null) {
+  if (batchProcessing) return;
+  if (!modelConfigured) {
+    announce("Photo analysis is not configured on the server. Configure Gemini, then try again.");
+    return;
+  }
+  if (onlyIndex !== null && (!Number.isInteger(onlyIndex) || !batchItems[onlyIndex])) {
+    announce("That photo is no longer in this batch. Select it again and retry.");
+    return;
+  }
+  const pendingItems = batchItems.filter((item, index) =>
+    (onlyIndex === null || index === onlyIndex) && (item.status === "queued" || item.status === "failed")
+  );
+  if (!pendingItems.length) {
+    announce("Every photo in this batch has already been analyzed.");
+    return;
+  }
+
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  batchRunId = runId;
+  batchProcessing = true;
+  batchReviewIndex = null;
+  currentAnalysisId = "";
+  $("#save-scan").disabled = true;
+  const context = buildUserContext();
+  const button = $("#analyze-photo");
+  button.disabled = true;
+  button.classList.add("is-loading");
+  const progress = $("#batch-progress");
+  let completed = 0;
+  let failed = 0;
+  renderBatchQueue();
+  renderBatchResults();
+
+  try {
+    for (let index = 0; index < batchItems.length; index += 1) {
+      const item = batchItems[index];
+      if (onlyIndex !== null && index !== onlyIndex) continue;
+      if (item.status !== "queued" && item.status !== "failed") continue;
+      if (batchRunId !== runId) return;
+
+      item.status = "analyzing";
+      item.error = "";
+      renderBatchQueue();
+      renderBatchResults();
+      button.textContent = `Analyzing photo ${index + 1} of ${batchItems.length}…`;
+      progress.textContent = `Analyzing photo ${index + 1} of ${batchItems.length}: ${item.file.name}`;
+
+      try {
+        const image = await readFileAsBase64(item.file);
+        if (batchRunId !== runId) return;
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...image, context }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || `Photo ${index + 1} could not be analyzed.`);
+        if (!result.analysis || !categories[result.analysis.category] || typeof result.analysis.itemName !== "string") {
+          throw new Error("Gemini returned an incomplete result for this photo. Retry this photo or choose another.");
+        }
+        if (batchRunId !== runId) return;
+
+        item.result = {
+          analysis: reconcileDetailedEstimate(result.analysis, result.detailed),
+          detailed: result.detailed && typeof result.detailed === "object" ? result.detailed : null,
+          model: typeof result.model === "string" && result.model ? result.model : "Google Gemini",
+        };
+        item.context = context;
+        item.analysisId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        item.analysisAt = new Date().toISOString();
+        try {
+          item.thumbnail = await makeReportThumbnail(item.file);
+        } catch (thumbnailError) {
+          console.warn("EcoSnapAI could not prepare an optional batch report thumbnail.", thumbnailError);
+        }
+        if (batchRunId !== runId) return;
+        item.status = "complete";
+        completed += 1;
+      } catch (error) {
+        if (batchRunId !== runId) return;
+        item.status = "failed";
+        item.error = error.message || "The model request failed. Retry this photo or choose another.";
+        failed += 1;
+      }
+      renderBatchQueue();
+      renderBatchResults();
+    }
+  } finally {
+    if (batchRunId === runId) {
+      batchRunId = "";
+      batchProcessing = false;
+      $("#photo-input").disabled = false;
+      $("#camera-trigger").disabled = false;
+      $("#camera-input").disabled = false;
+      document.querySelectorAll("[data-sample]").forEach((sampleButton) => { sampleButton.disabled = false; });
+      const remaining = batchItems.some((item) => item.status === "queued" || item.status === "failed");
+      resetAnalyzeButton(!modelConfigured || !remaining);
+      const ready = batchItems.filter((item) => item.status === "complete" || item.status === "saved").length;
+      progress.textContent = failed
+        ? `Batch finished: ${ready} photo${ready === 1 ? "" : "s"} ready and ${failed} failed. Retry any failed photo below.`
+        : `Batch complete: ${ready} separate photo review${ready === 1 ? " is" : "s are"} ready. Open each result to review and save it.`;
+      renderBatchQueue();
+      renderBatchResults();
+      if (completed || failed) {
+        announce(failed
+          ? `Batch finished with ${failed} photo${failed === 1 ? "" : "s"} to retry. Completed results are ready below.`
+          : `${ready} separate photo review${ready === 1 ? " is" : "s are"} ready. Review and save each item individually.`);
+      }
     }
   }
 }
@@ -2724,7 +3046,7 @@ $("#cancel-camera").addEventListener("click", () => stopCamera());
 $("#camera-fallback").addEventListener("click", openCameraFallback);
 $("#photo-input").addEventListener("change", (event) => {
   const input = event.currentTarget;
-  handlePhoto(input.files[0]);
+  handleSelectedPhotos(Array.from(input.files || []));
   input.value = "";
 });
 $("#camera-input").addEventListener("change", (event) => {
@@ -2741,6 +3063,25 @@ document.querySelectorAll("[data-sample]").forEach((button) => {
   button.addEventListener("click", () => setSample(button.dataset.sample));
 });
 $("#analyze-photo").addEventListener("click", analyzePhoto);
+$("#batch-result-list").addEventListener("click", (event) => {
+  const reviewButton = event.target.closest("[data-batch-review]");
+  if (reviewButton) {
+    const index = Number(reviewButton.dataset.batchReview);
+    if (Number.isInteger(index)) openBatchReview(index);
+    return;
+  }
+  const retryButton = event.target.closest("[data-batch-retry]");
+  if (!retryButton) return;
+  const index = Number(retryButton.dataset.batchRetry);
+  const item = batchItems[index];
+  if (!Number.isInteger(index) || !item || item.status !== "failed") return;
+  item.status = "queued";
+  item.error = "";
+  renderBatchQueue();
+  renderBatchResults();
+  resetAnalyzeButton(false);
+  void analyzeBatch(index);
+});
 $("#view-larger").addEventListener("click", openLightbox);
 $("#lightbox-close").addEventListener("click", closeLightbox);
 $("#photo-lightbox").addEventListener("click", (event) => {
