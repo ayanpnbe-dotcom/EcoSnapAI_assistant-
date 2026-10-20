@@ -41,10 +41,25 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;1,500;1,600&display=swap"
       rel="stylesheet"
     />
+    <script>
+      document.documentElement.classList.add("js");
+    </script>
     <link rel="stylesheet" href="./styles.css" />
     <script src="./app.js" defer></script>
   </head>
   <body>
+    <div class="scroll-progress" aria-hidden="true">
+      <span class="scroll-progress-fill" id="scroll-progress-fill"></span>
+    </div>
+    <div class="page-loader" id="page-loader" aria-hidden="true">
+      <div class="loader-inner">
+        <span class="loader-mark" aria-hidden="true">↻</span>
+        <span class="loader-word">EcoSnap<span>AI</span></span>
+        <span class="loader-bar"
+          ><span class="loader-bar-fill" id="loader-bar-fill"></span
+        ></span>
+      </div>
+    </div>
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <a class="brand" href="#top" aria-label="EcoSnapAI home">
@@ -110,16 +125,16 @@
 
     <main id="main">
       <section class="hero" id="top" aria-labelledby="hero-title">
-        <div class="hero-copy">
-          <p class="eyebrow">
+        <div class="hero-copy" data-reveal-group>
+          <p class="eyebrow" data-reveal>
             <span class="eyebrow-dot"></span> Smart recycling assistant
           </p>
-          <h1 id="hero-title">Recycling,<br /><em>made clearer.</em></h1>
-          <p class="hero-description">
+          <h1 id="hero-title" data-reveal>Recycling,<br /><em>made clearer.</em></h1>
+          <p class="hero-description" data-reveal data-parallax="0.05">
             Know what an item is, where it may belong, and how to keep useful
             materials moving.
           </p>
-          <div class="hero-actions">
+          <div class="hero-actions" data-reveal>
             <a class="button button-dark" href="#scan"
               >Try a sample scan <span aria-hidden="true">↗</span></a
             >
@@ -127,7 +142,7 @@
               >How it works <span aria-hidden="true">↓</span></a
             >
           </div>
-          <p class="hero-pills">
+          <p class="hero-pills" data-reveal>
             <span>Computer vision</span><i>·</i><span>Digital twin</span><i>·</i
             ><span>Grounded guidance</span>
           </p>
@@ -154,9 +169,9 @@
           <span>01</span><span class="label-line"></span
           ><span>Small choices, clearer paths</span>
         </div>
-        <div class="intro-grid">
-          <h2>Good intentions<br />deserve <em>clear answers.</em></h2>
-          <div class="intro-copy">
+        <div class="intro-grid" data-reveal-group>
+          <h2 data-reveal>Good intentions<br />deserve <em>clear answers.</em></h2>
+          <div class="intro-copy" data-reveal="left">
             <p>
               Materials can look alike, local rules vary, and a useful thing can
               end up in the wrong place. EcoSnapAI connects item review,
@@ -168,12 +183,13 @@
             >
           </div>
         </div>
-        <div class="promise-row">
-          <span><i aria-hidden="true">⌕</i> Less guesswork <b>01</b></span
+        <div class="promise-row" data-reveal-group data-parallax="0.04">
+          <span data-reveal><i aria-hidden="true">⌕</i> Less guesswork <b>01</b></span
           ><span
+            data-reveal
             ><i aria-hidden="true">↻</i> More materials in motion
             <b>02</b></span
-          ><span><i aria-hidden="true">✳</i> A better next step <b>03</b></span>
+          ><span data-reveal><i aria-hidden="true">✳</i> A better next step <b>03</b></span>
         </div>
       </section>
 
@@ -187,8 +203,8 @@
             <span>02</span><span class="label-line"></span
             ><span>Three parts. One better loop.</span>
           </div>
-          <div class="capability-heading">
-            <h2 id="capabilities-title">
+          <div class="capability-heading" data-reveal-group>
+            <h2 id="capabilities-title" data-reveal>
               From “what is this?”<br /><em>to “here’s what’s next.”</em>
             </h2>
             <p>
@@ -196,8 +212,8 @@
               in the story.
             </p>
           </div>
-          <div class="capability-grid">
-            <article class="capability-card">
+          <div class="capability-grid" data-reveal-group>
+            <article class="capability-card" data-reveal="zoom">
               <span class="cap-number">01 / RECOGNIZE</span
               ><span class="cap-icon" aria-hidden="true">⌕</span>
               <h3>Computer<br />Vision</h3>
@@ -207,7 +223,7 @@
               </p>
               <span class="cap-note">Prototype: sample or manual review</span>
             </article>
-            <article class="capability-card">
+            <article class="capability-card" data-reveal="zoom">
               <span class="cap-number">02 / TRACE</span
               ><span class="cap-icon" aria-hidden="true">◇</span>
               <h3>Material<br />Twin</h3>
@@ -219,7 +235,7 @@
                 >Explore the journey <span aria-hidden="true">↗</span></a
               >
             </article>
-            <article class="capability-card">
+            <article class="capability-card" data-reveal="zoom">
               <span class="cap-number">03 / GUIDE</span
               ><span class="cap-icon" aria-hidden="true">✳</span>
               <h3>Grounded<br />Guidance</h3>
@@ -239,12 +255,12 @@
             <span>03</span><span class="label-line"></span
             ><span>Try the prototype</span>
           </div>
-          <div class="scan-heading">
-            <div>
+          <div class="scan-heading" data-reveal-group>
+            <div data-reveal>
               <p class="eyebrow eyebrow-green">A little clarity, on demand</p>
               <h2 id="scan-title">Meet your next<br /><em>right step.</em></h2>
             </div>
-            <aside class="scan-intro" aria-label="How to get started">
+            <aside class="scan-intro" data-reveal="right" aria-label="How to get started">
               <span class="scan-intro-icon" aria-hidden="true">✳</span>
               <div class="scan-intro-content">
                 <span class="scan-intro-kicker">FROM ITEM TO INSIGHT</span>
@@ -261,7 +277,7 @@
               </div>
             </aside>
           </div>
-          <div class="scan-workspace">
+          <div class="scan-workspace" data-reveal-group>
             <div class="scan-controls">
               <div class="control-block">
                 <div class="control-title">
@@ -694,15 +710,15 @@
       </section>
 
       <section class="twin-section" id="twin">
-        <div class="section-shell twin-layout">
-          <div class="twin-copy">
+        <div class="section-shell twin-layout" data-reveal-group>
+          <div class="twin-copy" data-reveal="left">
             <div class="section-label">
               <span>04</span><span class="label-line"></span
               ><span>A living material map</span>
             </div>
             <p class="eyebrow eyebrow-green">The material twin</p>
             <h2>Nothing useful<br />should <em>disappear.</em></h2>
-            <p>
+            <p data-parallax="0.05">
               Every saved scan starts a transparent journey. Move it through the
               stages to see how one material record and its event history stay
               connected.
@@ -711,7 +727,7 @@
               ><i></i> Lifecycle is simulated in this prototype</span
             >
           </div>
-          <div class="journey-card">
+          <div class="journey-card" data-reveal="right">
             <div class="journey-card-head">
               <div>
                 <span class="overline">MATERIAL FLOW</span
@@ -764,8 +780,8 @@
           <span>05</span><span class="label-line"></span
           ><span>Your materials, in one place</span>
         </div>
-        <div class="dashboard-heading">
-          <div>
+        <div class="dashboard-heading" data-reveal-group data-parallax="0.04">
+          <div data-reveal>
             <h2 id="dashboard-title">
               A clearer view<br />of <em>what’s moving.</em>
             </h2>
@@ -774,7 +790,7 @@
               are simulated.
             </p>
           </div>
-          <div class="dashboard-legend">
+          <div class="dashboard-legend" data-reveal>
             <span><i class="legend-observed"></i> Saved records</span
             ><span><i class="legend-simulated"></i> Simulated stages</span>
           </div>
@@ -846,25 +862,25 @@
             </p>
           </div>
         </section>
-        <div class="metrics-grid">
-          <article class="metric-card">
+        <div class="metrics-grid" data-reveal-group>
+          <article class="metric-card" data-reveal>
             <span>Items saved</span><strong id="metric-total">0</strong
             ><small id="metric-scope">Observed in this browser</small>
           </article>
-          <article class="metric-card">
+          <article class="metric-card" data-reveal>
             <span>Needs review</span><strong id="metric-review">0</strong
             ><small>Unknown or manual review</small>
           </article>
-          <article class="metric-card">
+          <article class="metric-card" data-reveal>
             <span>In recovery</span><strong id="metric-recovery">0</strong
             ><small>Simulated journey stage</small>
           </article>
-          <article class="metric-card">
+          <article class="metric-card" data-reveal>
             <span>Reuse stage</span><strong id="metric-reuse">0</strong
             ><small>Simulated journey stage</small>
           </article>
         </div>
-        <section class="breakdown-panel" aria-labelledby="breakdown-title">
+        <section class="breakdown-panel" data-reveal aria-labelledby="breakdown-title">
           <div class="breakdown-heading">
             <div>
               <span class="overline">AT A GLANCE</span>
@@ -878,7 +894,7 @@
             </p>
           </div>
         </section>
-        <section class="project-report" aria-labelledby="project-report-title">
+        <section class="project-report" data-reveal aria-labelledby="project-report-title">
           <div class="project-report-copy">
             <span class="overline">HACKATHON REPORT</span>
             <h3 id="project-report-title">Turn your analysis into a report.</h3>
@@ -961,7 +977,7 @@
           <p class="report-error" id="report-error" role="alert" hidden></p>
           <div id="report-dashboard"></div>
         </div>
-        <div class="materials-toolbar">
+        <div class="materials-toolbar" data-reveal>
           <div>
             <h3 id="materials-heading">Material history</h3>
             <span id="history-count">0 records</span>
@@ -1022,10 +1038,10 @@
       </section>
 
       <section class="closing">
-        <div class="section-shell closing-inner">
-          <p class="eyebrow">A more thoughtful material journey</p>
-          <h2>Give good materials<br /><em>a next chapter.</em></h2>
-          <a class="button button-light" href="#scan"
+        <div class="section-shell closing-inner" data-reveal-group>
+          <p class="eyebrow" data-reveal>A more thoughtful material journey</p>
+          <h2 data-reveal>Give good materials<br /><em>a next chapter.</em></h2>
+          <a class="button button-light" href="#scan" data-reveal
             >Try EcoSnapAI <span aria-hidden="true">↗</span></a
           >
         </div>

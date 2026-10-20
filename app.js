@@ -363,8 +363,8 @@ function updateHeroTilt(event) {
     if (!bounds.width || !bounds.height) return;
     const offsetX = Math.min(1, Math.max(0, (pointerX - bounds.left) / bounds.width));
     const offsetY = Math.min(1, Math.max(0, (pointerY - bounds.top) / bounds.height));
-    const rotateY = -3 + (offsetX - 0.5) * 14;
-    const rotateX = 1 + (0.5 - offsetY) * 12;
+    const rotateY = -3 + (offsetX - 0.5) * 18;
+    const rotateX = 1 + (0.5 - offsetY) * 14;
     heroArt.classList.add("is-tilting");
     heroArt.style.setProperty("--tilt-x", `${rotateX.toFixed(2)}deg`);
     heroArt.style.setProperty("--tilt-y", `${rotateY.toFixed(2)}deg`);
@@ -3255,3 +3255,120 @@ setSample(currentCategory);
 renderDashboard();
 updateTwinJourney();
 checkModelStatus();
+initUiMotion();
+
+function initUiMotion() {
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const loader = document.getElementById("page-loader");
+  const loaderBar = document.getElementById("loader-bar-fill");
+  if (loader) {
+    let progress = 0;
+    const loaderTick = window.setInterval(() => {
+      progress = Math.min(96, progress + (96 - progress) * 0.1 + 1.2);
+      if (loaderBar) loaderBar.style.transform = `scaleX(${progress / 100})`;
+    }, 70);
+    const finishLoader = () => {
+      window.clearInterval(loaderTick);
+      if (!loader.classList.contains("is-done")) {
+        if (loaderBar) loaderBar.style.transform = "scaleX(1)";
+        window.setTimeout(() => loader.classList.add("is-done"), 300);
+        window.setTimeout(() => { if (loader.parentNode) loader.remove(); }, 1000);
+      }
+    };
+    window.addEventListener("load", () => window.setTimeout(finishLoader, 600));
+    window.setTimeout(finishLoader, 3200);
+  }
+
+  const progressFill = document.getElementById("scroll-progress-fill");
+  if (progressFill) {
+    let progressTicking = false;
+    const updateProgress = () => {
+      progressTicking = false;
+      const scrollable = document.documentElement.scrollHeight - window.innerHeight;
+      const percent = scrollable > 0 ? (window.scrollY / scrollable) * 100 : 0;
+      progressFill.style.width = `${percent}%`;
+    };
+    window.addEventListener("scroll", () => {
+      if (!progressTicking) {
+        progressTicking = true;
+        window.requestAnimationFrame(updateProgress);
+      }
+    }, { passive: true });
+    window.addEventListener("resize", updateProgress);
+    updateProgress();
+  }
+
+  if (reduceMotion) {
+    document.querySelectorAll("[data-reveal]").forEach((element) => element.classList.add("is-visible"));
+    return;
+  }
+
+  const revealElements = document.querySelectorAll("[data-reveal]");
+  const staggerGroups = new Map();
+  revealElements.forEach((element) => {
+    const group = element.closest("[data-reveal-group]");
+    if (group) {
+      if (!staggerGroups.has(group)) staggerGroups.set(group, []);
+      staggerGroups.get(group).push(element);
+    } else {
+      element.style.setProperty("--rd", "0s");
+    }
+  });
+  staggerGroups.forEach((items) => {
+    items.forEach((element, index) => element.style.setProperty("--rd", `${Math.min(index, 8) * 85}ms`));
+  });
+
+  const revealObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add("is-visible");
+        revealObserver.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.12, rootMargin: "0px 0px -5% 0px" });
+  revealElements.forEach((element) => revealObserver.observe(element));
+
+  const parallaxItems = [...document.querySelectorAll("[data-parallax]")].map((element) => ({
+    element,
+    speed: parseFloat(element.dataset.parallax) || 0.06,
+  }));
+  let scrollTarget = window.scrollY;
+  let scrollSmooth = scrollTarget;
+  let parallaxTicking = false;
+  function renderParallax() {
+    parallaxTicking = false;
+    scrollSmooth += (scrollTarget - scrollSmooth) * 0.075;
+    if (Math.abs(scrollTarget - scrollSmooth) < 0.1) scrollSmooth = scrollTarget;
+    const viewportCenter = scrollSmooth + window.innerHeight / 2;
+    parallaxItems.forEach(({ element, speed }) => {
+      if (!element.isConnected) return;
+      const bounds = element.getBoundingClientRect();
+      const elementCenter = bounds.top + scrollSmooth + bounds.height / 2;
+      const delta = (elementCenter - viewportCenter) * speed;
+      element.style.transform = `translate3d(0, ${(-delta).toFixed(2)}px, 0)`;
+    });
+  }
+  function scheduleParallax() {
+    if (parallaxTicking) return;
+    parallaxTicking = true;
+    window.requestAnimationFrame(renderParallax);
+  }
+  window.addEventListener("scroll", () => {
+    scrollTarget = window.scrollY;
+    scheduleParallax();
+  }, { passive: true });
+  window.addEventListener("resize", scheduleParallax);
+  renderParallax();
+
+  document.querySelectorAll(".capability-card").forEach((card) => {
+    card.addEventListener("pointermove", (event) => {
+      const bounds = card.getBoundingClientRect();
+      card.style.setProperty("--mx", `${event.clientX - bounds.left}px`);
+      card.style.setProperty("--my", `${event.clientY - bounds.top}px`);
+    });
+    card.addEventListener("pointerleave", () => {
+      card.style.setProperty("--mx", "50%");
+      card.style.setProperty("--my", "50%");
+    });
+  });
+}

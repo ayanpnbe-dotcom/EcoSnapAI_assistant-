@@ -41,7 +41,7 @@ You can select up to five PNG, JPG, or WebP photos at once (maximum 5 MB each). 
 
 The `.env` file is ignored by Git and blocked from the static web server. The API key is read only by the local server; it is not placed in the page, browser storage, or frontend JavaScript. Do not paste the key into chat, screenshots, source code, or a committed file. If you suspect it was exposed, revoke it in AI Studio and create a replacement.
 
-On desktop screens at least 1200px wide, the site layout defaults to 125% CSS zoom; the browser's own zoom setting is unchanged, and tablet/mobile layouts retain their existing responsive scale. Use the header theme button to cycle **Light**, **Dark**, and **3D** themes. The selected theme is saved in this browser; on first visit, the operating system's light/dark preference is used. Live camera preview requires browser permission and a secure context (localhost is supported); if live preview is unavailable, use the device camera/file-picker fallback.
+On desktop screens at least 1200px wide, the site layout defaults to 125% CSS zoom; the browser's own zoom setting is unchanged, and tablet/mobile layouts retain their existing responsive scale. The interface includes a brief loading animation, scroll reveals, a reading-progress indicator, and subtle hover effects; motion is disabled when the operating system requests reduced motion. Use the header theme button to cycle **Light**, **Dark**, and **3D** themes. The selected theme is saved in this browser; on first visit, the operating system's light/dark preference is used. Live camera preview requires browser permission and a secure context (localhost is supported); if live preview is unavailable, use the device camera/file-picker fallback.
 
 ## What gets sent to Gemini
 
